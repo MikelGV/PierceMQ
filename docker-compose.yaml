@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:alpine3.23
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USR: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: PierceMQ_TestDB
+    volumes:
+      - pgdata:/var/lib/postgresql/data 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U amdin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:alpine3.22
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  web:
+    build: 
+      context: .
+      dockerfile: ./docker/Dockerfile.web
+    ports: 
+      - "3000:3000"
+    #develop:
+    #  watch:
+    #    - action: sync
+    #      path: .
+    #      target: ./
+
+  workers:
+    build: 
+      context: .
+      dockerfile: ./docker/Dockerfile.worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      READIS_ADDR: redis:6379
+    #develop:
+    #  watch:
+    #    - action: sync
+    #      path: .
+    #      target: ./
+
+  api:
+    build: 
+      context: .
+      dockerfile: ./docker/Dockerfile.api
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      READIS_ADDR: redis:6379
+      DB_ADDR: postgres://admin:admin@data-store:5432/PierceMQ_TestDB?sslmode=disabled
+      ENV: development
+    ports:
+      - "8000:8000"
+    #develop:
+    #  watch:
+    #    - action: sync
+    #      path: .
+    #      target: ./
+
+volumes:
+  pgdata:
+  redisdata:
