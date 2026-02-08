@@ -20,6 +20,7 @@ services:
     restart: always
     ports:
       - "6379:6379"
+    command: redis-server --requirepass 123456890ca
     volumes:
       - redisdata:/data
     healthcheck:

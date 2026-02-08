@@ -10,11 +10,11 @@ import (
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/MikelGV/PierceMQ/internal/broker"
 )
 
-var wg sync.WaitGroup
-
-func NewServer() http.Handler {
+func NewServer(rds *broker.RedisStore) http.Handler {
 	mux := http.NewServeMux()
 
 	var handler http.Handler = mux
@@ -22,20 +22,18 @@ func NewServer() http.Handler {
 	return handler
 }
 
-func GracefulShutDown(ctx context.Context, httpServer *http.Server) error {
-	go func() {
-		defer wg.Done()
-		<-ctx.Done()
+func GracefulShutDown(wg *sync.WaitGroup, ctx context.Context, httpServer *http.Server) error {
+	defer wg.Done()
+	<-ctx.Done()
 
-		shutdownCtx := context.Background()
-		shutdownCtx, cancel := context.WithTimeout(shutdownCtx, 10*time.Second)
+	shutdownCtx := context.Background()
+	shutdownCtx, cancel := context.WithTimeout(shutdownCtx, 10*time.Second)
 
-		defer cancel()
+	defer cancel()
 
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(os.Stderr, "error shutting down http server %s\n", err)
-		}
-	}()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "error shutting down http server %s\n", err)
+	}
 
 	return nil
 }
@@ -48,7 +46,13 @@ func Run(
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	srvr := NewServer()
+	rds, err := broker.Redis_Connect()
+
+	if err != nil {
+		return fmt.Errorf("Failed to connect to redis: %s\n", err)
+	}
+
+	srvr := NewServer(rds)
 
 	httpServer := &http.Server{
 		Addr:    net.JoinHostPort("localhost", "8080"),
@@ -62,9 +66,12 @@ func Run(
 		}
 	}()
 
+	var wg sync.WaitGroup
 	wg.Add(1)
 
-	GracefulShutDown(ctx, httpServer)
+	go func() {
+		go GracefulShutDown(&wg, ctx, httpServer)
+	}()
 
 	wg.Wait()
 	return nil
