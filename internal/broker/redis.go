@@ -12,9 +12,9 @@ type RedisStore struct {
 	Conn *redis.Client
 }
 
-func Redis_Connect() (*RedisStore, error) {
+func Redis_Connect(rdsUrl string) (*RedisStore, error) {
 
-	opt, err := redis.ParseURL("redis://1234567890ca@localhost:6379/0")
+	opt, err := redis.ParseURL(rdsUrl)
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing url: %s\n", err)

@@ -12,9 +12,13 @@ import (
 	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/broker"
+	"github.com/MikelGV/PierceMQ/internal/config"
 )
 
-func NewServer(rds *broker.RedisStore) http.Handler {
+func NewServer(
+	rds *broker.RedisStore,
+	config *config.Config,
+) http.Handler {
 	mux := http.NewServeMux()
 
 	var handler http.Handler = mux
@@ -46,16 +50,19 @@ func Run(
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	rds, err := broker.Redis_Connect()
+	rds, err := broker.Redis_Connect(config.Env.RedisURI)
 
 	if err != nil {
 		return fmt.Errorf("Failed to connect to redis: %s\n", err)
 	}
 
-	srvr := NewServer(rds)
+	srvr := NewServer(
+		rds,
+		&config.Config{},
+	)
 
 	httpServer := &http.Server{
-		Addr:    net.JoinHostPort("localhost", "8080"),
+		Addr:    net.JoinHostPort(config.Env.Host, config.Env.Port),
 		Handler: srvr,
 	}
 
