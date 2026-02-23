@@ -70,6 +70,7 @@ func Run(
 	wg.Add(1)
 
 	go func() {
+		defer rds.Conn.Close()
 		go GracefulShutDown(&wg, ctx, httpServer)
 	}()
 
