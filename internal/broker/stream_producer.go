@@ -3,28 +3,62 @@ package broker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/MikelGV/PierceMQ/internal/task"
 	"github.com/redis/go-redis/v9"
 )
 
-func (rds *RedisStore) ProduceRedisStream(streamName string, taskValues task.FileProcessing_Payload) (string, error) {
-	/**
-	* I think this should work but i need to change the taskValues so that it accepts
-	* multiple payloads or handle the values differently maybe instead of taking the values from the
-	* payload i could take the values from the db or something like that maybe
-	* I could have a custom struct here that gets populated by the other payloads
-	**/
-	rs1, err := rds.Conn.XAdd(context.Background(), &redis.XAddArgs{
-		Stream: streamName,
-		Values: taskValues,
-	}).Result()
+//var rds RedisStore
+
+// Here we create a consumer group that will handle multilpe messages in a stream
+func InitConsumerGroupsAndStreams(ctx context.Context, streamName, groupName string, rds *redis.Client) error {
+	pipe := rds.Pipeline()
+
+	err := pipe.XGroupCreateMkStream(context.Background(), streamName, groupName, "0").Err()
 
 	if err != nil {
-		return "", err
+		if strings.Contains(err.Error(), "BUSYGROUP") {
+			return nil
+		}
+		return fmt.Errorf("failed to initialize stream %q with group %q: %w\n", streamName, groupName, err)
 	}
 
-	fmt.Println(rs1)
+	return nil
 
-	return "", nil
+}
+
+// Here we add a task to a stream
+func AddTaskToStream(ctx context.Context, streamName string, tasks []*task.TaskRequest) ([]string, error) {
+	var rds *redis.Client
+	pipeline := rds.Pipeline()
+
+	var cmds []*redis.StringCmd
+
+	for _, task := range tasks {
+		cmd := pipeline.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: streamName,
+			Values: task.ToFields(),
+			ID:     "*",
+		})
+
+		cmds = append(cmds, cmd)
+	}
+
+	if _, err := pipeline.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("An Error Occurred while trying to exec pipeline: %v \n", err)
+	}
+
+	var ids []string
+	for _, cmd := range cmds {
+
+		id, err := cmd.Result()
+		if err != nil {
+			return nil, err
+		}
+
+		ids = append(ids, id)
+	}
+
+	return ids, nil
 }
