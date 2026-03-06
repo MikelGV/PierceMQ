@@ -33,9 +33,9 @@ func Redis_Connect(rdsUrl string) (*RedisStore, error) {
 
 	rds := redis.NewClient(opt)
 
-	if err := rds.Ping(context.Background()); err != nil {
+	if err := rds.Ping(context.Background()).Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error pinging redis: %s\n", err)
-		return nil, fmt.Errorf("%s\n", err)
+		return nil, fmt.Errorf("ping redis: %w\n", err)
 	}
 	streamsAndGroups := map[string]string{
 		Email_stream: Email_group,

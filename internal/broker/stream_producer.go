@@ -29,9 +29,8 @@ func InitConsumerGroupsAndStreams(ctx context.Context, streamName, groupName str
 }
 
 // Here we add a task to a stream
-func AddTaskToStream(ctx context.Context, streamName string, tasks []*task.TaskRequest) ([]string, error) {
-	var rds *redis.Client
-	pipeline := rds.Pipeline()
+func (rds *RedisStore) AddTaskToStream(ctx context.Context, streamName string, tasks []*task.TaskRequest) ([]string, error) {
+	pipeline := rds.Conn.Pipeline()
 
 	var cmds []*redis.StringCmd
 

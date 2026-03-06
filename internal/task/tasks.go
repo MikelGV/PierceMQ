@@ -11,6 +11,14 @@ type TaskRequest struct {
 	Payload map[string]any
 }
 
+type Job struct {
+	ID          string
+	PAYLOAD     any
+	TYPE        string
+	ATTEMPT     int
+	MAX_RETRIES int
+}
+
 /**
 * To fields has to be changed once i write the custom encode decode i think
 **/
