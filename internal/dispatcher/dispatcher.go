@@ -2,6 +2,7 @@ package dispatcher
 
 import (
 	"context"
+	"sync"
 
 	"github.com/MikelGV/PierceMQ/internal/task"
 	"github.com/MikelGV/PierceMQ/internal/worker"
@@ -10,12 +11,16 @@ import (
 type Dispatcher struct {
 	WorkerPool chan *worker.Worker
 	Jobqueue   chan *task.Job
+
+	handlers map[string]HandlerFunc
+	mu       sync.RWMutex
 }
 
 func (d *Dispatcher) NewDispatcher(workerCount int) (*Dispatcher, error) {
 	return &Dispatcher{
 		WorkerPool: make(chan *worker.Worker, workerCount),
 		Jobqueue:   make(chan *task.Job, 100),
+		handlers:   make(map[string]HandlerFunc),
 	}, nil
 }
 
