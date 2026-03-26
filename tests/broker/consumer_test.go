@@ -19,9 +19,9 @@ func TestConsumeJobs(t *testing.T) {
 
 	store := utils_test.SetUpRedis(t)
 
-	const streamKey = "tasks:email"
-	const groupKey = "email-workers"
-	const consumerKey = "idk"
+	var streamKey = "tasks:email"
+	var groupKey = "email-workers"
+	var consumerKey = "idk"
 
 	err := store.ConsumeJobs(ctx, streamKey, groupKey, consumerKey, &dispatcher.Dispatcher{})
 	require.NoError(t, err, "this should work!")

@@ -44,7 +44,7 @@ func Redis_Connect(rdsUrl string) (*RedisStore, error) {
 	}
 
 	for stream, group := range streamsAndGroups {
-		if err := InitConsumerGroupsAndStreams(context.Background(), stream, group, rds); err != nil {
+		if err = InitConsumerGroupsAndStreams(context.Background(), stream, group, rds); err != nil {
 			return nil, fmt.Errorf("Error trying to initialize consumer %w\n", err)
 		}
 		continue

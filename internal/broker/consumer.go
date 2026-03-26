@@ -3,10 +3,17 @@ package broker
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/dispatcher"
 	"github.com/MikelGV/PierceMQ/internal/task"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	claimInIdl     = 5 * time.Second
+	claimBatchSize = 35
+	blockTime      = 100 * time.Millisecond
 )
 
 /**
@@ -14,25 +21,50 @@ import (
 **/
 
 func (rds *RedisStore) ConsumeJobs(ctx context.Context, streamName, groupName, consumerName string, dispatcher *dispatcher.Dispatcher) error {
+	ticker := time.NewTicker(claimInIdl / 5)
+	defer ticker.Stop()
+
 	for {
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-ticker.C:
+
+			claimed, _, err := rds.Conn.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+				Stream:   streamName,
+				Consumer: consumerName,
+				Group:    groupName,
+				MinIdle:  claimInIdl,
+				Count:    claimBatchSize,
+				Start:    "0-0",
+			}).Result()
+
+			if err != nil && err != redis.Nil {
+				fmt.Printf("XAUTOCLAIM failed: %v", err)
+				continue
+			}
+
+			if len(claimed) > 0 {
+				fmt.Printf("claimed %d stale messages", len(claimed))
+			}
+
+			rds.ProcessJobs(ctx, claimed, dispatcher, streamName, groupName)
+
 		default:
 			res, err := rds.Conn.XReadGroup(ctx, &redis.XReadGroupArgs{
 				Group:    groupName,
 				Consumer: consumerName,
 				Streams:  []string{streamName, ">"},
-				Block:    0,
-				Count:    50,
+				Block:    blockTime,
+				Count:    35,
 			}).Result()
 
 			if err != nil {
 				if err == context.Canceled {
 					return err
 				}
-				fmt.Printf("Something went wrong when trying to read the job: %s /n", err)
+				fmt.Printf("Something went wrong when trying to read the job: %s \n", err)
 
 				continue
 			}
@@ -109,4 +141,5 @@ func (rds *RedisStore) ClaimFailedJobs(ctx context.Context, streamName, consumer
 
 // This is were we retry jobs that have failed and have been sent back to the broker
 
-func (rds *RedisStore) RetryJobs(ctx context.Context) {}
+func (rds *RedisStore) RetryJobs(ctx context.Context) {
+}
