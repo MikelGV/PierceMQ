@@ -41,15 +41,14 @@ func (rds *RedisStore) ConsumeJobs(ctx context.Context, streamName, groupName, c
 			}).Result()
 
 			if err != nil && err != redis.Nil {
-				fmt.Printf("XAUTOCLAIM failed: %v", err)
+				fmt.Printf("XAUTOCLAIM failed: %v \n", err)
 				continue
 			}
 
 			if len(claimed) > 0 {
 				fmt.Printf("claimed %d stale messages", len(claimed))
+				rds.ProcessJobs(ctx, claimed, dispatcher, streamName, groupName)
 			}
-
-			rds.ProcessJobs(ctx, claimed, dispatcher, streamName, groupName)
 
 		default:
 			res, err := rds.Conn.XReadGroup(ctx, &redis.XReadGroupArgs{
@@ -60,14 +59,19 @@ func (rds *RedisStore) ConsumeJobs(ctx context.Context, streamName, groupName, c
 				Count:    35,
 			}).Result()
 
+			if err == redis.Nil || len(res) == 0 {
+				continue
+			}
+
 			if err != nil {
 				if err == context.Canceled {
 					return err
 				}
-				fmt.Printf("Something went wrong when trying to read the job: %s \n", err)
+				fmt.Printf("XReadGroup failed: %v \n", err)
 
 				continue
 			}
+
 			for _, streams := range res {
 				rds.ProcessJobs(ctx, streams.Messages, dispatcher, streamName, groupName)
 			}
@@ -96,13 +100,13 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, Messages []redis.XMessag
 
 		err = dispatcher.DispatchTask(ctx, job)
 		if err != nil {
-			fmt.Printf("Something went wrong trying to dispatch task: %s /n", err)
+			fmt.Printf("Something went wrong trying to dispatch task: %s \n", err)
 			continue
 		}
 
 		_, err = rds.AckJob(ctx, streamName, groupName, msg.ID)
 		if err != nil {
-			fmt.Printf("xAck failed after success id=%s, err=%v/n", msg.ID, err)
+			fmt.Printf("xAck failed after success id=%s, err=%v\n", msg.ID, err)
 		}
 
 	}

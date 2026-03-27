@@ -13,9 +13,11 @@ import (
 
 // Here we create a consumer group that will handle multilpe messages in a stream
 func InitConsumerGroupsAndStreams(ctx context.Context, streamName, groupName string, rds *redis.Client) error {
-	pipe := rds.Pipeline()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	err := pipe.XGroupCreateMkStream(context.Background(), streamName, groupName, "0").Err()
+	err := rds.XGroupCreateMkStream(context.Background(), streamName, groupName, "0").Err()
 
 	if err != nil {
 		if strings.Contains(err.Error(), "BUSYGROUP") {
