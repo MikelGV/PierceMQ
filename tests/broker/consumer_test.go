@@ -78,3 +78,5 @@ func TestConsumeJobs(t *testing.T) {
 	t.Logf("Test completed successfully: %d jobs produced and processed", len(reqs))
 
 }
+
+func TestCheckLiveGroups(t *testing.T) {}

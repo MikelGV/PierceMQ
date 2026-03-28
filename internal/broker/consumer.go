@@ -104,11 +104,6 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, Messages []redis.XMessag
 			continue
 		}
 
-		_, err = rds.AckJob(ctx, streamName, groupName, msg.ID)
-		if err != nil {
-			fmt.Printf("xAck failed after success id=%s, err=%v\n", msg.ID, err)
-		}
-
 	}
 
 }
@@ -131,19 +126,8 @@ func (rds *RedisStore) AckJob(ctx context.Context, streamName, groupName, msgId 
 }
 
 /**
-* Checks what consumers are active
+* Checks what consumer groups are active
 **/
 func (rds *RedisStore) CheckLiveGroups(msgId string) error {
 	return nil
-}
-
-// This is were we claim jobs that haven't been acknwoledged by the ack
-
-func (rds *RedisStore) ClaimFailedJobs(ctx context.Context, streamName, consumerName string) (string, error) {
-	return "", nil
-}
-
-// This is were we retry jobs that have failed and have been sent back to the broker
-
-func (rds *RedisStore) RetryJobs(ctx context.Context) {
 }
