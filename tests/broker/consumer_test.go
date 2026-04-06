@@ -79,4 +79,10 @@ func TestConsumeJobs(t *testing.T) {
 
 }
 
-func TestCheckLiveGroups(t *testing.T) {}
+func TestCheckLiveGroups(t *testing.T) {
+	ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+
+	defer testCancel()
+
+	store := utils_test.SetUpRedis(t)
+}
