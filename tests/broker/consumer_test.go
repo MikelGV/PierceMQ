@@ -85,4 +85,9 @@ func TestCheckLiveGroups(t *testing.T) {
 	defer testCancel()
 
 	store := utils_test.SetUpRedis(t)
+
+	var groupKey = broker.Email_group
+
+	liveD, err := store.CheckLiveGroups(groupKey)
+	require.NoError(t, err)
 }
