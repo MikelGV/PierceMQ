@@ -128,6 +128,20 @@ func (rds *RedisStore) AckJob(ctx context.Context, streamName, groupName, msgId 
 /**
 * Checks what consumer groups are active
 **/
-func (rds *RedisStore) CheckLiveGroups(msgId string) error {
-	return nil
+func (rds *RedisStore) CheckLiveGroups(ctx context.Context, streamName, groupName string) ([]string, error) {
+	consumers, err := rds.Conn.XInfoConsumers(ctx, streamName, groupName).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumers for stream %s, group %s: %w", streamName, groupName, err)
+	}
+
+	names := make([]string, len(consumers))
+	for i, c := range consumers {
+		names[i] = c.Name
+	}
+	return names, nil
+}
+
+// This is were we retry jobs that have failed and have been sent back to the broker
+
+func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
 }
