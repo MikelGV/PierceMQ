@@ -329,5 +329,39 @@ func TestCheckLiveGroups(t *testing.T) {
 }
 
 func TestHandleJobFailiure(t *testing.T) {
-	t.Skip("HandleJobFailiure not implemented yet")
+	store := utils_test.SetUpRedis(t)
+	streamKey := broker.Email_stream
+	groupKey := broker.Email_group
+
+	t.Run("Job fails because of logical issue", func(t *testing.T) {})
+
+	t.Run("Job fails becuase of network issues", func(t *testing.T) {})
+
+	t.Run("Job fails becuase of worker issues", func(t *testing.T) {})
+
+	//t.Skip("HandleJobFailiure not implemented yet")
+}
+
+func TestMoveToDeadLetterQueue(t *testing.T) {
+	t.Skip("MoveToDeadLetterQueue not implemented yet")
+}
+
+func TestRecoverStalePendingJobs(t *testing.T) {
+	t.Skip("RecoverStalePendingJobs not implemented yet")
+}
+
+func TestRetryJob(t *testing.T) {
+	t.Skip("RetryJob not implemented yet")
+}
+
+func TestMonitorPending(t *testing.T) {
+	t.Skip("MonitorPending not implemented yet")
+}
+
+func TestTrimStream(t *testing.T) {
+	t.Skip("TrimStream not implemented yet")
+}
+
+func TestRequeueFromDLQ(t *testing.T) {
+	t.Skip("RequeueFromDLQ not implemented yet")
 }

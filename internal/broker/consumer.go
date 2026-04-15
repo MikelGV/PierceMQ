@@ -145,3 +145,22 @@ func (rds *RedisStore) CheckLiveGroups(ctx context.Context, streamName, groupNam
 
 func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
 }
+
+func (rds *RedisStore) RetryJob(ctx context.Context) {
+}
+
+func (rds *RedisStore) MoveToDeadLetterQueue(ctx context.Context, streamName, consumerName string) (string, error) {
+	return "", nil
+}
+
+// This is were we claim jobs that haven't been acknwoledged by the ack
+
+func (rds *RedisStore) RecoverStalePendingJobs(ctx context.Context, streamName, consumerName string) (string, error) {
+	return "", nil
+}
+
+func (rds *RedisStore) MonitorPending(ctx context.Context) {}
+
+func (rds *RedisStore) TrimStream(ctx context.Context) {}
+
+func (rds *RedisStore) RequeueFromDLQ(ctx context.Context) {}
