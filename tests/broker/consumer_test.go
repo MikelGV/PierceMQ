@@ -329,11 +329,16 @@ func TestCheckLiveGroups(t *testing.T) {
 }
 
 func TestHandleJobFailiure(t *testing.T) {
+	ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer testCancel()
+
 	store := utils_test.SetUpRedis(t)
 	streamKey := broker.Email_stream
 	groupKey := broker.Email_group
 
-	t.Run("Job fails because of logical issue", func(t *testing.T) {})
+	t.Run("Job fails because of logical issue", func(t *testing.T) {
+
+	})
 
 	t.Run("Job fails becuase of network issues", func(t *testing.T) {})
 
