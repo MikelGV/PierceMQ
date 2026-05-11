@@ -141,6 +141,21 @@ func (rds *RedisStore) CheckLiveGroups(ctx context.Context, streamName, groupNam
 	return names, nil
 }
 
+func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, groupName string) ([]redis.XPendingExt, error) {
+	entries, err := rds.Conn.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: streamName,
+		Group:  groupName,
+		Start:  "-",
+		End:    "+",
+		Count:  100,
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending details: %w", err)
+	}
+
+	return entries, nil
+}
+
 // This is were we retry jobs that have failed and have been sent back to the broker
 
 func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
