@@ -329,22 +329,139 @@ func TestCheckLiveGroups(t *testing.T) {
 }
 
 func TestHandleJobFailiure(t *testing.T) {
-	ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer testCancel()
-
 	store := utils_test.SetUpRedis(t)
 	streamKey := broker.Email_stream
 	groupKey := broker.Email_group
 
 	t.Run("Job fails because of logical issue", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
 
+		consumerName := "failure-logical-consumer"
+
+		_, err := store.Conn.XAdd(ctx, &redis.XAddArgs{
+			Stream: streamKey,
+			Values: map[string]any{
+				"type":    "",
+				"payload": `{"invalid": "json"`,
+			},
+		}).Result()
+		require.NoError(t, err)
+
+		_, err = store.Conn.XAdd(ctx, &redis.XAddArgs{
+			Stream: streamKey,
+			Values: map[string]any{
+				"type":    "email",
+				"payload": "not-valid-json",
+			},
+		}).Result()
+		require.NoError(t, err)
+
+		_, err = store.Conn.XAdd(ctx, &redis.XAddArgs{
+			Stream: streamKey,
+			Values: map[string]any{
+				"payload": `{"key": "value"}`,
+			},
+		}).Result()
+		require.NoError(t, err)
+
+		disp := &dispatcher.Dispatcher{}
+		NewDisp, err := disp.NewDispatcher(5)
+		require.NoError(t, err)
+
+		dispCtx, dispCancel := context.WithCancel(ctx)
+		defer dispCancel()
+
+		go NewDisp.Run(dispCtx)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- store.ConsumeJobs(ctx, streamKey, groupKey, consumerName, NewDisp)
+		}()
+
+		time.Sleep(2 * time.Second)
+
+		testCancel()
+
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
+			}
+		case <-time.After(8 * time.Second):
+			t.Fatal("ConsumeJobs failed to stop in time")
+		}
+
+		pending, err := store.GetPendingMessages(context.Background(), streamKey, groupKey)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(pending), 3, "expected messages to remain pending after logical failures")
+
+		t.Logf("Logical failures test: %d messages remained pending (as expected)", len(pending))
 	})
 
-	t.Run("Job fails becuase of network issues", func(t *testing.T) {})
+	t.Run("Job fails because of network issues", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
 
-	t.Run("Job fails becuase of worker issues", func(t *testing.T) {})
+		consumerName := "failure-network-consumer"
 
-	//t.Skip("HandleJobFailiure not implemented yet")
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Network failure test",
+			}},
+		}
+
+		ids, err := store.AddTaskToStream(ctx, streamKey, reqs)
+		require.NoError(t, err)
+
+		disp := &dispatcher.Dispatcher{}
+		NewDisp, err := disp.NewDispatcher(5)
+		require.NoError(t, err)
+
+		dispCtx, dispCancel := context.WithCancel(ctx)
+		defer dispCancel()
+
+		go NewDisp.Run(dispCtx)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- store.ConsumeJobs(ctx, streamKey, groupKey, consumerName, NewDisp)
+		}()
+
+		time.Sleep(500 * time.Millisecond)
+
+		testCancel()
+
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
+			}
+		case <-time.After(8 * time.Second):
+			t.Fatal("ConsumeJobs failed to stop in time")
+		}
+
+		pending, err := store.GetPendingMessages(context.Background(), streamKey, groupKey)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(pending), 1, "expected message to remain pending after context cancellation")
+
+		var found bool
+		for _, p := range pending {
+			if p.ID == ids[0] {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "expected original message ID to remain in pending list")
+
+		t.Logf("Network failure test: message %s remained pending after context cancellation", ids[0])
+	})
+
+	t.Run("Job fails because of worker issues", func(t *testing.T) {
+		t.Skip("Worker implementation needed before testing worker failures")
+	})
 }
 
 func TestMoveToDeadLetterQueue(t *testing.T) {
