@@ -156,11 +156,14 @@ func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, group
 	return entries, nil
 }
 
-// This is were we retry jobs that have failed and have been sent back to the broker
-
+// This is function encapsulates both recovering and retrying jobs
 func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
+	/**
+	* So this function is for handling the retry and recover functions
+	**/
 }
 
+// This is the function with the logic for retrying jobs
 func (rds *RedisStore) RetryJob(ctx context.Context) {
 }
 
@@ -174,8 +177,10 @@ func (rds *RedisStore) RecoverStalePendingJobs(ctx context.Context, streamName, 
 	return "", nil
 }
 
+// Here we get how many jobs are in pending
 func (rds *RedisStore) MonitorPending(ctx context.Context) {}
 
 func (rds *RedisStore) TrimStream(ctx context.Context) {}
 
+// This is were we requeue jobs from the dead letter queue
 func (rds *RedisStore) RequeueFromDLQ(ctx context.Context) {}

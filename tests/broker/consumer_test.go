@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+/**
+* All of this should be redone when i add partitioning and replication
+**/
+
 func TestConsumeJobs(t *testing.T) {
 	store := utils_test.SetUpRedis(t)
 	streamKey := broker.Email_stream
@@ -389,6 +393,7 @@ func TestHandleJobFailiure(t *testing.T) {
 				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
 			}
 		case <-time.After(8 * time.Second):
+			// Here i have to handle the failure with the HandleJobFailiure function
 			t.Fatal("ConsumeJobs failed to stop in time")
 		}
 
@@ -440,6 +445,7 @@ func TestHandleJobFailiure(t *testing.T) {
 				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
 			}
 		case <-time.After(8 * time.Second):
+			// Here i have to handle the failure with the HandleJobFailiure function
 			t.Fatal("ConsumeJobs failed to stop in time")
 		}
 
@@ -473,6 +479,25 @@ func TestRecoverStalePendingJobs(t *testing.T) {
 }
 
 func TestRetryJob(t *testing.T) {
+	store := utils_test.SetUpRedis(t)
+	streamKey := broker.Email_stream
+	groupKey := broker.Email_group
+	consumerName := "retry-test-consumer"
+
+	t.Run("Retry failed job successfully", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+	})
+
+	t.Run("Retry multilpe failed job", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+	})
+
+	t.Run("Retry failed job fails", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+	})
 	t.Skip("RetryJob not implemented yet")
 }
 
