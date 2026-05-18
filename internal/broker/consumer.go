@@ -164,7 +164,8 @@ func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
 }
 
 // This is the function with the logic for retrying jobs
-func (rds *RedisStore) RetryJob(ctx context.Context) {
+func (rds *RedisStore) RetryJob(ctx context.Context, ids string) error {
+	return nil
 }
 
 func (rds *RedisStore) MoveToDeadLetterQueue(ctx context.Context, streamName, consumerName string) (string, error) {

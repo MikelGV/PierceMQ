@@ -445,7 +445,6 @@ func TestHandleJobFailiure(t *testing.T) {
 				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
 			}
 		case <-time.After(8 * time.Second):
-			// Here i have to handle the failure with the HandleJobFailiure function
 			t.Fatal("ConsumeJobs failed to stop in time")
 		}
 
@@ -461,6 +460,7 @@ func TestHandleJobFailiure(t *testing.T) {
 			}
 		}
 		require.True(t, found, "expected original message ID to remain in pending list")
+		// Here i have to handle the failure with the HandleJobFailiure function
 
 		t.Logf("Network failure test: message %s remained pending after context cancellation", ids[0])
 	})
@@ -482,11 +482,73 @@ func TestRetryJob(t *testing.T) {
 	store := utils_test.SetUpRedis(t)
 	streamKey := broker.Email_stream
 	groupKey := broker.Email_group
-	consumerName := "retry-test-consumer"
 
-	t.Run("Retry failed job successfully", func(t *testing.T) {
+	t.Run("Retry failed job successfully (transiient/network failure)", func(t *testing.T) {
 		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+
+		ids, err := store.AddTaskToStream(ctx, streamKey, reqs)
+		require.NoError(t, err)
+
+		disp := &dispatcher.Dispatcher{}
+		NewDisp, err := disp.NewDispatcher(5)
+		require.NoError(t, err)
+
+		dispCtx, dispCancel := context.WithCancel(ctx)
+		defer dispCancel()
+
+		go NewDisp.Run(dispCtx)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- store.ConsumeJobs(ctx, streamKey, groupKey, consumerName, NewDisp)
+		}()
+
+		time.Sleep(500 * time.Millisecond)
+
+		testCancel()
+
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				t.Logf("ConsumeJobs exited with unexpected error: %v", err)
+			}
+		case <-time.After(8 * time.Second):
+			t.Fatal("ConsumeJobs failed to stop in time")
+		}
+
+		pending, err := store.GetPendingMessages(context.Background(), streamKey, groupKey)
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, len(pending), 1, "expected message to remain pending after context cancellation")
+
+		var found bool
+		for _, p := range pending {
+			if p.ID == ids[0] {
+				found = true
+				break
+			}
+		}
+
+		require.True(t, found, "expected original message ID to remain in pending list")
+
+		// Here i have to handle the retry
+		err = store.RetryJob(ctx, ids[0])
+		require.NoError(t, err)
+
+		pendingAfter, _ := store.GetPendingMessages(context.Background(), streamKey, groupKey)
+		t.Logf("Peding after retry: %d", pendingAfter)
+
+		t.Logf("Network failure test: message %s remained pending after context cancellation", ids[0])
 	})
 
 	t.Run("Retry multilpe failed job", func(t *testing.T) {
