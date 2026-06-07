@@ -156,6 +156,11 @@ func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, group
 	return entries, nil
 }
 
+/**
+* I might rework the part for retry and handlejobfailiure after I decide in the
+* system design how to handle it correctly so for now I will not keep working on int
+**/
+
 // This is function encapsulates both recovering and retrying jobs
 func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
 	/**
@@ -164,7 +169,7 @@ func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
 }
 
 // This is the function with the logic for retrying jobs
-func (rds *RedisStore) RetryJob(ctx context.Context, ids string) error {
+func (rds *RedisStore) RetryJob(ctx context.Context, ids, streamkey string) error {
 	return nil
 }
 

@@ -532,9 +532,11 @@ func TestRetryJob(t *testing.T) {
 		require.GreaterOrEqual(t, len(pending), 1, "expected message to remain pending after context cancellation")
 
 		var found bool
+		var Ids string
 		for _, p := range pending {
 			if p.ID == ids[0] {
 				found = true
+				p.ID = Ids
 				break
 			}
 		}
@@ -542,7 +544,7 @@ func TestRetryJob(t *testing.T) {
 		require.True(t, found, "expected original message ID to remain in pending list")
 
 		// Here i have to handle the retry
-		err = store.RetryJob(ctx, ids[0])
+		err = store.RetryJob(ctx, Ids, "something")
 		require.NoError(t, err)
 
 		pendingAfter, _ := store.GetPendingMessages(context.Background(), streamKey, groupKey)
@@ -609,7 +611,7 @@ func TestRetryJob(t *testing.T) {
 		require.True(t, found, "expected original message ID to remain in pending list")
 
 		for _, msgID := range ids {
-			err = store.RetryJob(ctx, msgID)
+			err = store.RetryJob(ctx, msgID, "something")
 			require.NoError(t, err)
 		}
 
@@ -665,9 +667,11 @@ func TestRetryJob(t *testing.T) {
 		require.GreaterOrEqual(t, len(pending), 1, "expected message to remain pending after context cancellation")
 
 		var found bool
+		var Ids string
 		for _, p := range pending {
 			if p.ID == ids[0] {
 				found = true
+				p.ID = Ids
 				break
 			}
 		}
@@ -676,7 +680,7 @@ func TestRetryJob(t *testing.T) {
 
 		// When we call retry it has to fail and throw some kind of error that
 		// we have to handle and acknowledge
-		err = store.RetryJob(ctx, ids[0])
+		err = store.RetryJob(ctx, Ids, "something")
 		require.NoError(t, err)
 
 		pendingAfter, _ := store.GetPendingMessages(context.Background(), streamKey, groupKey)
