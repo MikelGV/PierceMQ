@@ -163,6 +163,11 @@ func (rds *RedisStore) HandleJobFailiure(ctx context.Context, id, streamName, co
 		return nil
 	}
 
+	/**
+		* Before we do the retry we have to acknwoledge that the job has failed and
+		* sent to the dlq and then we can retry it.
+	**/
+
 	rds.RetryJob(ctx, id, streamName)
 	return nil
 }

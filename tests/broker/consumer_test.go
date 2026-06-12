@@ -471,7 +471,80 @@ func TestHandleJobFailiure(t *testing.T) {
 }
 
 func TestMoveToDeadLetterQueue(t *testing.T) {
-	t.Skip("MoveToDeadLetterQueue not implemented yet")
+	store := utils_test.SetUpRedis(t)
+	streamKey := broker.Email_stream
+	groupKey := broker.Email_group
+
+	t.Run("Job fails and gets moved to the dlq successfully", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+	})
+
+	/**
+	t.Skip("Moving job to the dlq fails", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+	})
+
+	t.Skip("Job gets moved to the dlq after timeout", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+	})
+
+	t.Skip("Job gets moved to the dlq after worker failiure", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+	})
+	t.Skip("Multiple jobs fail and get sent to the dlq", func(t *testing.T) {
+		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer testCancel()
+
+		consumerName := "retry-test-consumer"
+		reqs := []*task.TaskRequest{
+			{Id: 1, Type: "email", Payload: map[string]any{
+				"from": "test@test.com",
+				"to":   "test2@test.com",
+				"body": "Retry this job",
+			}},
+		}
+	})
+	**/
 }
 
 func TestRecoverStalePendingJobs(t *testing.T) {
@@ -543,7 +616,8 @@ func TestRetryJob(t *testing.T) {
 
 		require.True(t, found, "expected original message ID to remain in pending list")
 
-		// Here i have to handle the retry
+		// I have to pass the failiure error to the movetodlq function before
+		// I can retry the job
 		err = store.RetryJob(ctx, Ids, "something")
 		require.NoError(t, err)
 
