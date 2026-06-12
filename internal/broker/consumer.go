@@ -156,20 +156,23 @@ func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, group
 	return entries, nil
 }
 
-/**
-* I might rework the part for retry and handlejobfailiure after I decide in the
-* system design how to handle it correctly so for now I will not keep working on int
-**/
-
 // This is function encapsulates both recovering and retrying jobs
-func (rds *RedisStore) HandleJobFailiure(ctx context.Context) {
-	/**
-	* So this function is for handling the retry and recover functions
-	**/
+func (rds *RedisStore) HandleJobFailiure(ctx context.Context, id, streamName, consumerName, groupName string, rcount int) error {
+	if rcount <= 3 {
+		rds.RecoverStalePendingJobs(ctx, id, streamName)
+		return nil
+	}
+
+	rds.RetryJob(ctx, id, streamName)
+	return nil
 }
 
 // This is the function with the logic for retrying jobs
 func (rds *RedisStore) RetryJob(ctx context.Context, ids, streamkey string) error {
+	/**
+	* I have to acknwoledge the job first to move it into the available queue
+	* and then requeue it with XADD
+	**/
 	return nil
 }
 
