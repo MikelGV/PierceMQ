@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/dispatcher"
@@ -14,13 +16,14 @@ const (
 	claimInIdl     = 5 * time.Second
 	claimBatchSize = 35
 	blockTime      = 100 * time.Millisecond
+	maxRetries     = 3
 )
 
 /**
-* ConsumeJob function consumes the job that has been choosen
+* ServeJobs reads messages from a Redis stream and feeds them as jobs to workers via the dispatcher.
 **/
 
-func (rds *RedisStore) ConsumeJobs(ctx context.Context, streamName, groupName, consumerName string, dispatcher *dispatcher.Dispatcher) error {
+func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, consumerName string, dispatcher *dispatcher.Dispatcher) error {
 	ticker := time.NewTicker(claimInIdl / 5)
 	defer ticker.Stop()
 
@@ -81,12 +84,12 @@ func (rds *RedisStore) ConsumeJobs(ctx context.Context, streamName, groupName, c
 	}
 }
 
-func (rds *RedisStore) ProcessJobs(ctx context.Context, Messages []redis.XMessage, dispatcher *dispatcher.Dispatcher, streamName, groupName string) {
-	for _, msg := range Messages {
-
+func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessage, d *dispatcher.Dispatcher, streamName, groupName string) {
+	for _, msg := range messages {
 		taskreq, err := task.FromFields(msg.Values)
 		if err != nil {
-			fmt.Printf("Something went wrong: %s /n", err)
+			fmt.Printf("Malformed message %s: %v — moving to DLQ\n", msg.ID, err)
+			rds.MoveToDeadLetterQueue(ctx, msg.ID, streamName, groupName, "malformed message: "+err.Error())
 			continue
 		}
 
@@ -94,13 +97,14 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, Messages []redis.XMessag
 			ID:          msg.ID,
 			TYPE:        taskreq.Type,
 			PAYLOAD:     taskreq.Payload,
-			ATTEMPT:     0,
-			MAX_RETRIES: 3,
+			ATTEMPT:     taskreq.Attempt,
+			MAX_RETRIES: maxRetries,
 		}
 
-		err = dispatcher.DispatchTask(ctx, job)
+		err = d.DispatchTask(ctx, job)
 		if err != nil {
-			fmt.Printf("Something went wrong trying to dispatch task: %s \n", err)
+			fmt.Printf("Failed to dispatch job %s: %v\n", msg.ID, err)
+			rds.HandleJobFailure(ctx, msg.ID, streamName, groupName, taskreq.Attempt)
 			continue
 		}
 
@@ -156,41 +160,96 @@ func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, group
 	return entries, nil
 }
 
-// This is function encapsulates both recovering and retrying jobs
-func (rds *RedisStore) HandleJobFailiure(ctx context.Context, id, streamName, consumerName, groupName string, rcount int) error {
-	if rcount <= 3 {
-		rds.RecoverStalePendingJobs(ctx, id, streamName)
-		return nil
+func (rds *RedisStore) HandleJobFailure(ctx context.Context, msgID, streamName, groupName string, attempt int) error {
+	if attempt < maxRetries {
+		return rds.RetryJob(ctx, msgID, streamName, groupName)
+	}
+	return rds.MoveToDeadLetterQueue(ctx, msgID, streamName, groupName, "max retries exceeded")
+}
+
+func (rds *RedisStore) RetryJob(ctx context.Context, msgID, streamName, groupName string) error {
+	msgs, err := rds.Conn.XRange(ctx, streamName, msgID, msgID).Result()
+	if err != nil {
+		return fmt.Errorf("failed to read message %s for retry: %w", msgID, err)
+	}
+	if len(msgs) == 0 {
+		return fmt.Errorf("message %s not found in stream %s", msgID, streamName)
 	}
 
-	/**
-		* Before we do the retry we have to acknwoledge that the job has failed and
-		* sent to the dlq and then we can retry it.
-	**/
+	values := msgs[0].Values
+	attempt := getAttempt(values)
+	values["attempt"] = strconv.Itoa(attempt + 1)
 
-	rds.RetryJob(ctx, id, streamName)
+	newID, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: values,
+		ID:     "*",
+	}).Result()
+	if err != nil {
+		return fmt.Errorf("failed to requeue message %s: %w", msgID, err)
+	}
+
+	if _, err := rds.AckJob(ctx, streamName, groupName, msgID); err != nil {
+		return fmt.Errorf("failed to ack original message %s after retry: %w", msgID, err)
+	}
+
+	fmt.Printf("Retried message %s as %s (attempt %d)\n", msgID, newID, attempt+1)
 	return nil
 }
 
-// This is the function with the logic for retrying jobs
-func (rds *RedisStore) RetryJob(ctx context.Context, ids, streamkey string) error {
-	/**
-	* I have to acknwoledge the job first to move it into the available queue
-	* and then requeue it with XADD
-	**/
+func (rds *RedisStore) MoveToDeadLetterQueue(ctx context.Context, msgID, streamName, groupName, reason string) error {
+	msgs, err := rds.Conn.XRange(ctx, streamName, msgID, msgID).Result()
+	if err != nil {
+		return fmt.Errorf("failed to read message %s for DLQ: %w", msgID, err)
+	}
+	if len(msgs) == 0 {
+		return fmt.Errorf("message %s not found in stream %s", msgID, streamName)
+	}
+
+	values := msgs[0].Values
+	values["_dlq_reason"] = reason
+	values["_dlq_time"] = strconv.FormatInt(time.Now().Unix(), 10)
+	values["_original_stream"] = streamName
+
+	dlqName := dlqStream(streamName)
+	if _, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
+		Stream: dlqName,
+		Values: values,
+		ID:     "*",
+	}).Result(); err != nil {
+		return fmt.Errorf("failed to move message %s to DLQ %s: %w", msgID, dlqName, err)
+	}
+
+	if _, err := rds.AckJob(ctx, streamName, groupName, msgID); err != nil {
+		return fmt.Errorf("failed to ack message %s after moving to DLQ: %w", msgID, err)
+	}
+
+	fmt.Printf("Moved message %s to DLQ %s (reason: %s)\n", msgID, dlqName, reason)
 	return nil
 }
 
-func (rds *RedisStore) MoveToDeadLetterQueue(ctx context.Context, streamName, consumerName string) (string, error) {
-	return "", nil
+func getAttempt(values map[string]any) int {
+	if raw, ok := values["attempt"]; ok {
+		switch v := raw.(type) {
+		case string:
+			n, err := strconv.Atoi(v)
+			if err == nil {
+				return n
+			}
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		}
+	}
+	return 0
 }
 
-// This is were we claim jobs that haven't been acknwoledged by the ack
-
-func (rds *RedisStore) RecoverStalePendingJobs(ctx context.Context, streamName, consumerName string) (string, error) {
-	return "", nil
+func dlqStream(streamName string) string {
+	return strings.Replace(streamName, "tasks:", "dlq:", 1)
 }
 
+/**
 // Here we get how many jobs are in pending
 func (rds *RedisStore) MonitorPending(ctx context.Context) {}
 
@@ -198,3 +257,4 @@ func (rds *RedisStore) TrimStream(ctx context.Context) {}
 
 // This is were we requeue jobs from the dead letter queue
 func (rds *RedisStore) RequeueFromDLQ(ctx context.Context) {}
+**/

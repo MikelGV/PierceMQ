@@ -3,12 +3,14 @@ package task
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 type TaskRequest struct {
 	Id      int
 	Type    string
 	Payload map[string]any
+	Attempt int
 }
 
 type Job struct {
@@ -32,6 +34,7 @@ func (t TaskRequest) ToFields() map[string]any {
 	return map[string]any{
 		"type":    t.Type,
 		"payload": string(payloadBytes),
+		"attempt": t.Attempt,
 	}
 }
 
@@ -54,8 +57,21 @@ func FromFields(fields map[string]any) (*TaskRequest, error) {
 		return nil, err
 	}
 
+	attempt := 0
+	if a, ok := fields["attempt"]; ok {
+		switch v := a.(type) {
+		case string:
+			attempt, _ = strconv.Atoi(v)
+		case int64:
+			attempt = int(v)
+		case float64:
+			attempt = int(v)
+		}
+	}
+
 	return &TaskRequest{
 		Type:    taskType,
 		Payload: payload,
+		Attempt: attempt,
 	}, nil
 }
