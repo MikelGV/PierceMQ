@@ -8,5 +8,16 @@ type Worker struct {
 	Worker     chan *Worker
 }
 
-func NewWorker() {
+/**
+	* Create a new worker
+**/
+func (*Worker) NewWorker() (*Worker, error) {
+	return nil, nil
+}
+
+/**
+	* Run every worker that has been created and create a pool of them
+**/
+func (*Worker) Run_Pool() ([]*Worker, error) {
+	return nil, nil
 }
