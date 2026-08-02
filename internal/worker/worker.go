@@ -9,15 +9,19 @@ type Worker struct {
 }
 
 /**
-	* Create a new worker
+	* Create a new worker pool
 **/
-func (*Worker) NewWorker() (*Worker, error) {
-	return nil, nil
+func (*Worker) NewWorker(id int, workerpool chan *Worker) *Worker {
+	return &Worker{
+		ID:         id,
+		JobChannel: make(chan *task.Job),
+		Worker:     workerpool,
+	}
 }
 
 /**
-	* Run every worker that has been created and create a pool of them
+	* Runs the worker main loop
 **/
-func (*Worker) Run_Pool() ([]*Worker, error) {
-	return nil, nil
+func (*Worker) Run() error {
+	return nil
 }
