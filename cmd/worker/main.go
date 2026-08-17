@@ -1,1 +1,5 @@
 package worker
+
+func main() {
+
+}
