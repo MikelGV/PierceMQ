@@ -37,7 +37,7 @@ func (w *Worker) NewWorker(id int, workerpool chan *Worker, conn *redis.Client) 
 	* Runs the worker main loop
 	* Here we run the processJobs the error handling,etc, ...
 **/
-func (w *Worker) Run() error {
+func (w *Worker) Run(ctx context.Context) error {
 	return nil
 }
 
