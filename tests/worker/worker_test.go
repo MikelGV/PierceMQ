@@ -1,6 +1,7 @@
 package worker_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/MikelGV/PierceMQ/internal/task"
@@ -47,6 +48,7 @@ func TestNewWorker(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
+	ctx := context.Background()
 	t.Run("All Workers run, each pick a job from the stream and process the jobs successfully", func(t *testing.T) {
 		w := &worker.Worker{
 			ID:         1,
@@ -54,7 +56,7 @@ func TestRun(t *testing.T) {
 			Worker:     make(chan *worker.Worker),
 		}
 
-		err := w.Run()
+		err := w.Run(ctx)
 
 		assert.NoError(t, err)
 
@@ -67,7 +69,7 @@ func TestRun(t *testing.T) {
 			Worker:     make(chan *worker.Worker),
 		}
 
-		err := w.Run()
+		err := w.Run(ctx)
 
 		assert.NoError(t, err)
 	})
@@ -79,14 +81,34 @@ func TestRun(t *testing.T) {
 			Worker:     make(chan *worker.Worker),
 		}
 
-		err := w.Run()
+		err := w.Run(ctx)
 
 		assert.NoError(t, err)
 
 	})
 }
 
-func ProcessJob(t *testing.T) {
+/**
+* Here we test what happens when the woker takes a job and calls the ProcessJob
+* function to process the task at hand, so the tasks available are: send email,
+* file processing, and binary processing
+**/
+func ProcessJobTest(t *testing.T) {
+
+	t.Run("Email job gets processed correctly", func(t *testing.T) {
+
+	})
+
+	t.Skip("Binary job gets processed correctly", func(t *testing.T) {})
+
+	t.Skip("File processing job gets processed correctly", func(t *testing.T) {})
+
+	t.Run("Email job fails to process due to syntax error", func(t *testing.T) {})
+
+	t.Skip("Binary job fails due to timeout", func(t *testing.T) {})
+
+	t.Skip("File processing job fails due to timeout", func(t *testing.T) {})
+
+	t.Skip("Email job fails due to timeout", func(t *testing.T) {})
 
 }
-

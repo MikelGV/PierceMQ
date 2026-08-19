@@ -35,7 +35,7 @@ func (w *Worker) NewWorker(id int, workerpool chan *Worker, conn *redis.Client) 
 
 /**
 	* Runs the worker main loop
-	* Here we run the processJobs the error handling,etc, ...
+	* Here we run the processJobs the error handling, etc, ...
 **/
 func (w *Worker) Run(ctx context.Context) error {
 	return nil
@@ -45,6 +45,7 @@ func (w *Worker) Run(ctx context.Context) error {
 * This function process all jobs differentiating each type of job and doing what
 * it requires to complete them
 **/
-func (w *Worker) processJobs() {
+func (w *Worker) ProcessJobs(wId, job_type, job_payload string) (string, error) {
+	return "", nil
 
 }
