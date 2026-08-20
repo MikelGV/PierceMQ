@@ -62,7 +62,8 @@ func TestRun(t *testing.T) {
 
 	})
 
-	t.Skip("All Workers run, but fail during the job processing", func(t *testing.T) {
+	t.Run("All Workers run, but fail during the job processing", func(t *testing.T) {
+		t.Skip("not implemented yet")
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
@@ -74,7 +75,8 @@ func TestRun(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Skip("All Workers fail", func(t *testing.T) {
+	t.Run("All Workers fail", func(t *testing.T) {
+		t.Skip("not implemented yet")
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
@@ -89,37 +91,72 @@ func TestRun(t *testing.T) {
 }
 
 /**
-* Here we test what happens when the woker takes a job and calls the ProcessJob
-* function to process the task at hand, so the tasks available are: send email,
-* file processing, and binary processing
+* Here we test what happens when the worker takes a job and calls the ProcessJobs
+* function to process the task at hand. The available job types are: email,
+* file processing, and exec. Each job must be routed to the right processing
+* path based on its type.
 **/
-func ProcessJobTest(t *testing.T) {
-	ctx := context.Background()
+func TestProcessJobs(t *testing.T) {
+	w := &worker.Worker{ID: 1}
 
 	t.Run("Email job gets processed correctly", func(t *testing.T) {
-		store := utils_test.SetUpRedis(t)
-		w := &worker.Worker{
-			ID:         1,
-			JobChannel: make(chan *task.Job),
-			Worker:     make(chan *worker.Worker),
-		}
+		result, err := w.ProcessJobs("1", "email", `{"from": "test@test.com", "to": "test2@test.com", "body": "Hello mate"}`)
 
-		err := w.Run(ctx)
-
-		assert.NoError(t, err)
-
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "expected a success message for a valid email job")
 	})
 
-	t.Skip("Binary job gets processed correctly", func(t *testing.T) {})
+	t.Run("File job gets processed correctly", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "file", `{"filename": "report.pdf", "path": "/tmp/report.pdf", "operation": "convert"}`)
 
-	t.Skip("File processing job gets processed correctly", func(t *testing.T) {})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "expected a success message for a valid file job")
+	})
 
-	t.Run("Email job fails to process due to syntax error", func(t *testing.T) {})
+	t.Run("Exec job gets processed correctly", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "exec", `{"command": "ls", "args": ["-la"], "timeout": 30}`)
 
-	t.Skip("Binary job fails due to timeout", func(t *testing.T) {})
+		require.NoError(t, err)
+		assert.NotEmpty(t, result, "expected a success message for a valid exec job")
+	})
 
-	t.Skip("File processing job fails due to timeout", func(t *testing.T) {})
+	t.Run("Unknown job type returns an error", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "video", `{"url": "https://example.com/clip.mp4"}`)
 
-	t.Skip("Email job fails due to timeout", func(t *testing.T) {})
+		require.Error(t, err)
+		assert.Empty(t, result)
+	})
 
+	t.Run("Empty payload returns an error", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "email", "")
+
+		require.Error(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("Malformed payload returns an error", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "email", "{not valid json")
+
+		require.Error(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("Email job fails to process due to missing required field", func(t *testing.T) {
+		result, err := w.ProcessJobs("1", "email", `{"from": "test@test.com", "body": "no recipient"}`)
+
+		require.Error(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("Binary job fails due to timeout", func(t *testing.T) {
+		t.Skip("not implemented yet")
+	})
+
+	t.Run("File job fails due to timeout", func(t *testing.T) {
+		t.Skip("not implemented yet")
+	})
+
+	t.Run("Email job fails due to timeout", func(t *testing.T) {
+		t.Skip("not implemented yet")
+	})
 }
