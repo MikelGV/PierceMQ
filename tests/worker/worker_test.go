@@ -94,8 +94,19 @@ func TestRun(t *testing.T) {
 * file processing, and binary processing
 **/
 func ProcessJobTest(t *testing.T) {
+	ctx := context.Background()
 
 	t.Run("Email job gets processed correctly", func(t *testing.T) {
+		store := utils_test.SetUpRedis(t)
+		w := &worker.Worker{
+			ID:         1,
+			JobChannel: make(chan *task.Job),
+			Worker:     make(chan *worker.Worker),
+		}
+
+		err := w.Run(ctx)
+
+		assert.NoError(t, err)
 
 	})
 
