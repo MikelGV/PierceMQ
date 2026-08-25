@@ -36,29 +36,33 @@ func (w *Worker) NewWorker(id int, workerpool chan *Worker, conn *redis.Client) 
 
 /**
 	* Runs the worker main loop
-	* Here we run the processJobs the error handling, etc, ...
+	* Here we run the claimjopbs, processJobs the error handling, etc, ...
+	* Also here we handle sending and reciving the heartbeats
 **/
 func (w *Worker) Run(ctx context.Context) error {
 	return nil
 }
 
 /**
+	* This function will claim the jobs and then send them to the
+	* ProcessJobs function
+**/
+func (w *Worker) ClaimJob(wId, job_type, job_payload string, ctx context.Context) error {
+	return nil
+}
+
+/**
 * This function process all jobs differentiating each type of job and doing what
 * it requires to complete them
-**/
-func (w *Worker) ProcessJobs(wId, job_type, job_payload string, ctx context.Context) (string, error) {
+*
+ */
+func (w *Worker) ProcessJobs(job_type, job_payload string, ctx context.Context) (string, error) {
 	if job_type == "email" {
 		/**
 		* Here we process the job if it's an email type
 		**/
 	} else if job_type == "exec" {
-		/**
-		* Here we process the job if it's an exec type
-		**/
 	} else if job_type == "file" {
-		/**
-		* Here we process the job if it's a file type
-		**/
 	} else {
 		return "", errors.New("Job type doesn't match with the allowed ones")
 	}

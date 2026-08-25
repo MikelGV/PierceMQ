@@ -91,6 +91,21 @@ func TestRun(t *testing.T) {
 }
 
 /**
+	* Here we test what happens when a worker claims a job in a worker pool
+**/
+func TestClaimJobs(t *testing.T) {
+	t.Run("Worker claims the job successfully", func(t *testing.T) {
+		w := &worker.Worker{
+			ID:         1,
+			JobChannel: make(chan *task.Job),
+			Worker:     make(chan *worker.Worker),
+		}
+		
+		job := 
+	})
+}
+
+/**
 * Here we test what happens when the worker takes a job and calls the ProcessJobs
 * function to process the task at hand. The available job types are: email,
 * file processing, and exec. Each job must be routed to the right processing
@@ -101,49 +116,49 @@ func TestProcessJobs(t *testing.T) {
 	w := &worker.Worker{ID: 1}
 
 	t.Run("Email job gets processed correctly", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "email", `{"from": "test@test.com", "to": "test2@test.com", "body": "Hello mate"}`, ctx)
+		result, err := w.ProcessJobs("email", `{"from": "test@test.com", "to": "test2@test.com", "body": "Hello mate"}`, ctx)
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, result, "expected a success message for a valid email job")
 	})
 
 	t.Run("File job gets processed correctly", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "file", `{"filename": "report.pdf", "path": "/tmp/report.pdf", "operation": "convert"}`, ctx)
+		result, err := w.ProcessJobs("file", `{"filename": "report.pdf", "path": "/tmp/report.pdf", "operation": "convert"}`, ctx)
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, result, "expected a success message for a valid file job")
 	})
 
 	t.Run("Exec job gets processed correctly", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "exec", `{"command": "ls", "args": ["-la"], "timeout": 30}`, ctx)
+		result, err := w.ProcessJobs("exec", `{"command": "ls", "args": ["-la"], "timeout": 30}`, ctx)
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, result, "expected a success message for a valid exec job")
 	})
 
 	t.Run("Unknown job type returns an error", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "video", `{"url": "https://example.com/clip.mp4"}`, ctx)
+		result, err := w.ProcessJobs("video", `{"url": "https://example.com/clip.mp4"}`, ctx)
 
 		require.Error(t, err)
 		assert.Empty(t, result)
 	})
 
 	t.Run("Empty payload returns an error", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "email", "", ctx)
+		result, err := w.ProcessJobs("email", "", ctx)
 
 		require.Error(t, err)
 		assert.Empty(t, result)
 	})
 
 	t.Run("Malformed payload returns an error", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "email", "{not valid json", ctx)
+		result, err := w.ProcessJobs("email", "{not valid json", ctx)
 
 		require.Error(t, err)
 		assert.Empty(t, result)
 	})
 
 	t.Run("Email job fails to process due to missing required field", func(t *testing.T) {
-		result, err := w.ProcessJobs("1", "email", `{"from": "test@test.com", "body": "no recipient"}`, ctx)
+		result, err := w.ProcessJobs("email", `{"from": "test@test.com", "body": "no recipient"}`, ctx)
 
 		require.Error(t, err)
 		assert.Empty(t, result)
