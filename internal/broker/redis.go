@@ -13,13 +13,19 @@ type RedisStore struct {
 }
 
 const (
-	Email_stream = "tasks:email"
-	File_stream  = "tasks:file"
-	Exec_stream  = "tasks:exec"
+	Email_high_stream = "stream:queue:email:high"
+	Email_low_stream  = "stream:queue:email:low"
+	File_high_stream  = "stream:queue:file_processing:high"
+	File_low_stream   = "stream:queue:file_processing:low"
+	Exec_high_stream  = "stream:queue:exec_processing:high"
+	Exec_low_stream   = "stream:queue:exec_processing:low"
 
-	Email_group = "email-workers"
-	File_group  = "file-workers"
-	Exec_group  = "exec-workers"
+	Email_group_high = "email-workers-high"
+	Email_group_low  = "email-workers-low"
+	File_group_high  = "file_processing-workers-high"
+	File_group_low   = "file_processing-workers-low"
+	Exec_group_high  = "exec-workers-workers-high"
+	Exec_group_low   = "exec-workers-workers-low"
 )
 
 func Redis_Connect(rdsUrl string) (*RedisStore, error) {
@@ -38,9 +44,12 @@ func Redis_Connect(rdsUrl string) (*RedisStore, error) {
 		return nil, fmt.Errorf("ping redis: %w\n", err)
 	}
 	streamsAndGroups := map[string]string{
-		Email_stream: Email_group,
-		File_stream:  File_group,
-		Exec_stream:  Exec_group,
+		Email_high_stream: Email_group_high,
+		Email_low_stream:  Email_group_low,
+		File_high_stream:  File_group_high,
+		File_low_stream:   File_group_low,
+		Exec_high_stream:  Exec_group_high,
+		Exec_low_stream:   Exec_group_low,
 	}
 
 	for stream, group := range streamsAndGroups {
