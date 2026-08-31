@@ -20,8 +20,8 @@ import (
 
 func TestServeJobs(t *testing.T) {
 	store := utils_test.SetUpRedis(t)
-	streamKey := broker.Email_stream
-	groupKey := broker.Email_group
+	streamKey := broker.Email_low_stream
+	groupKey := broker.Email_group_low
 
 	t.Run("successful job consumed and acknowledged", func(t *testing.T) {
 		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -197,8 +197,8 @@ func TestAckJob(t *testing.T) {
 	defer testCancel()
 
 	store := utils_test.SetUpRedis(t)
-	streamKey := broker.Email_stream
-	groupKey := broker.Email_group
+	streamKey := broker.Email_low_stream
+	groupKey := broker.Email_group_low
 	consumerName := "ack-test-consumer"
 
 	t.Run("single message acknowledged successfully", func(t *testing.T) {
@@ -269,8 +269,8 @@ func TestCheckLiveGroups(t *testing.T) {
 
 	store := utils_test.SetUpRedis(t)
 
-	streamKey := broker.Email_stream
-	groupKey := broker.Email_group
+	streamKey := broker.Email_low_stream
+	groupKey := broker.Email_group_low
 
 	t.Run("empty group returns no consumers", func(t *testing.T) {
 		consumers, err := store.CheckLiveGroups(ctx, streamKey, groupKey)
@@ -334,8 +334,8 @@ func TestCheckLiveGroups(t *testing.T) {
 
 func TestHandleJobFailure(t *testing.T) {
 	store := utils_test.SetUpRedis(t)
-	streamKey := broker.Email_stream
-	groupKey := broker.Email_group
+	streamKey := broker.Email_low_stream
+	groupKey := broker.Email_group_low
 
 	t.Run("Job fails because of logical issue", func(t *testing.T) {
 		ctx, testCancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -485,8 +485,8 @@ func TestRecoverStalePendingJobs(t *testing.T) {
 
 func TestRetryJob(t *testing.T) {
 	store := utils_test.SetUpRedis(t)
-	streamKey := broker.Email_stream
-	groupKey := broker.Email_group
+	streamKey := broker.Email_low_stream
+	groupKey := broker.Email_group_low
 
 	t.Run("retry a pending message successfully", func(t *testing.T) {
 		ctx := context.Background()
