@@ -10,6 +10,7 @@ type Config struct {
 	Host     string
 	RedisURI string
 	PSQLURI  string
+	DB_URL   string
 }
 
 var Env = initConfig()
@@ -19,6 +20,7 @@ func initConfig() Config {
 		Port:     getEnv("PORT", "8080"),
 		Host:     getEnv("HOST", "0.0.0.0"),
 		RedisURI: getEnv("RedisURI", "redis://1234567890ca@localhost:6379/0"),
+		DB_URL:   getEnv("DBURL", ""),
 	}
 }
 
