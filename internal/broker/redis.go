@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/MikelGV/PierceMQ/internal/queue"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -12,20 +13,21 @@ type RedisStore struct {
 	Conn *redis.Client
 }
 
+// Re-export queue constants for backward compatibility; canonical source is internal/queue.
 const (
-	Email_high_stream = "stream:queue:email:high"
-	Email_low_stream  = "stream:queue:email:low"
-	File_high_stream  = "stream:queue:file_processing:high"
-	File_low_stream   = "stream:queue:file_processing:low"
-	Exec_high_stream  = "stream:queue:exec_processing:high"
-	Exec_low_stream   = "stream:queue:exec_processing:low"
+	Email_high_stream = queue.EmailHighStream
+	Email_low_stream  = queue.EmailLowStream
+	File_high_stream  = queue.FileHighStream
+	File_low_stream   = queue.FileLowStream
+	Exec_high_stream  = queue.ExecHighStream
+	Exec_low_stream   = queue.ExecLowStream
 
-	Email_group_high = "email-workers-high"
-	Email_group_low  = "email-workers-low"
-	File_group_high  = "file_processing-workers-high"
-	File_group_low   = "file_processing-workers-low"
-	Exec_group_high  = "exec-workers-workers-high"
-	Exec_group_low   = "exec-workers-workers-low"
+	Email_group_high = queue.EmailGroupHigh
+	Email_group_low  = queue.EmailGroupLow
+	File_group_high  = queue.FileGroupHigh
+	File_group_low   = queue.FileGroupLow
+	Exec_group_high  = queue.ExecGroupHigh
+	Exec_group_low   = queue.ExecGroupLow
 )
 
 func Redis_Connect(rdsUrl string) (*RedisStore, error) {

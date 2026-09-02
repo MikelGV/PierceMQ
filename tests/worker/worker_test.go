@@ -2,7 +2,9 @@ package worker_test
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/task"
 	"github.com/MikelGV/PierceMQ/internal/worker"
@@ -48,42 +50,53 @@ func TestNewWorker(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	ctx := context.Background()
 	t.Run("All Workers run, each pick a job from the stream and process the jobs successfully", func(t *testing.T) {
+		// Supervisor is now process-isolated (3 pools). In unit test we use nofork mode
+		// and a cancellable context so Run blocks until context done, then returns ctx.Err().
+		ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+		defer cancel()
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
 			Worker:     make(chan *worker.Worker),
 		}
-
-		err := w.Run(ctx)
-
-		assert.NoError(t, err)
+		getenv := func(k string) string {
+			if k == "WORKER_TEST_NOFORK" {
+				return "1"
+			}
+			return os.Getenv(k)
+		}
+		err := w.Run(ctx, os.Stdout, getenv)
+		// Run is long-running; it should exit via context cancellation in test mode
+		assert.Error(t, err)
+		assert.True(t, err == context.Canceled || err == context.DeadlineExceeded || err.Error() == "context deadline exceeded")
 
 	})
 
 	t.Run("All Workers run, but fail during the job processing", func(t *testing.T) {
 		t.Skip("not implemented yet")
+		ctx := context.Background()
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
 			Worker:     make(chan *worker.Worker),
 		}
 
-		err := w.Run(ctx)
+		err := w.Run(ctx, os.Stdout, os.Getenv)
 
 		assert.NoError(t, err)
 	})
 
 	t.Run("All Workers fail", func(t *testing.T) {
 		t.Skip("not implemented yet")
+		ctx := context.Background()
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
 			Worker:     make(chan *worker.Worker),
 		}
 
-		err := w.Run(ctx)
+		err := w.Run(ctx, os.Stdout, os.Getenv)
 
 		assert.NoError(t, err)
 
@@ -94,15 +107,19 @@ func TestRun(t *testing.T) {
 	* Here we test what happens when a worker claims a job in a worker pool
 **/
 func TestClaimJobs(t *testing.T) {
-	t.Run("Worker claims the job successfully", func(t *testing.T) {
+	/**
+	store := utils_test.SetUpRedis(t)
+	t.Skip("Worker claims the job successfully", func(t *testing.T) {
 		w := &worker.Worker{
 			ID:         1,
 			JobChannel: make(chan *task.Job),
 			Worker:     make(chan *worker.Worker),
 		}
-		
-		job := 
+
+		sjob := store.ServeJobs()
+
 	})
+	**/
 }
 
 /**

@@ -5,11 +5,10 @@ import (
 	"sync"
 
 	"github.com/MikelGV/PierceMQ/internal/task"
-	"github.com/MikelGV/PierceMQ/internal/worker"
 )
 
 type Dispatcher struct {
-	WorkerPool chan *worker.Worker
+	WorkerPool chan chan *task.Job
 	Jobqueue   chan *task.Job
 
 	handlers map[string]HandlerFunc
@@ -18,7 +17,7 @@ type Dispatcher struct {
 
 func (d *Dispatcher) NewDispatcher(workerCount int) (*Dispatcher, error) {
 	return &Dispatcher{
-		WorkerPool: make(chan *worker.Worker, workerCount),
+		WorkerPool: make(chan chan *task.Job, workerCount),
 		Jobqueue:   make(chan *task.Job, 100),
 		handlers:   make(map[string]HandlerFunc),
 	}, nil
@@ -29,9 +28,8 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		select {
 		case job := <-d.Jobqueue:
 			go func(job *task.Job) {
-
-				worker := <-d.WorkerPool
-				worker.JobChannel <- job
+				jobCh := <-d.WorkerPool
+				jobCh <- job
 			}(job)
 		case <-ctx.Done():
 			return
