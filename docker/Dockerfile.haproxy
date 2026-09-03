@@ -1,0 +1,6 @@
+FROM haproxy:3.0-alpine
+
+# curl only for the container healthcheck against the stats page.
+RUN apk add --no-cache curl
+
+COPY docker/haproxy/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg

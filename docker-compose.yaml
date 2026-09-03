@@ -1,20 +1,262 @@
 services:
-  postgres:
-    image: postgres:alpine3.23
+  # --- Consensus for Patroni. Single node for local dev;
+  # TODO prod: 3-node etcd cluster.
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
     restart: always
     ports:
-      - "5432:5432"
+      - "2379:2379"
     environment:
-      POSTGRES_USR: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: PierceMQ_TestDB
+      ETCD_NAME: etcd
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: etcd=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
     volumes:
-      - pgdata:/var/lib/postgresql/data 
+      - etcd-data:/etcd-data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U amdin"]
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - piercemq
+
+  # --- One-shot: fresh named volumes are root-owned, but the PG image
+  # runs as postgres. Fix ownership before any PG node starts.
+  pg-perms:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    user: root
+    command: ["chown", "-R", "postgres:postgres", "/v/leader", "/v/sync", "/v/async", "/v/backup", "/v/repo"]
+    volumes:
+      - pgdata-leader:/v/leader
+      - pgdata-sync:/v/sync
+      - pgdata-async:/v/async
+      - pgdata-backup:/v/backup
+      - pgbackrest-repo:/v/repo
+    restart: "no"
+    networks:
+      - piercemq
+
+  # --- Patroni scope `piercemq`: 1 leader + 1 sync standby + 1 async
+  # offload replica + 1 async backup/DR replica. Same image; per-node
+  # identity via PATRONI_* env (overlaid onto the mounted yml at startup),
+  # role tags via the mounted patroni-*.yml file.
+  pg-leader:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    hostname: pg-leader
+    restart: always
+    ports:
+      - "8008:8008" # Patroni REST (debugging / patronictl)
+    environment:
+      PATRONI_NAME: pg-leader
+      PATRONI_SCOPE: piercemq
+      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-leader:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-leader:8008
+    volumes:
+      - pgdata-leader:/var/lib/postgresql/data
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./docker/patroni/patroni-base.yml:/etc/patroni/patroni.yml:ro
+      - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    depends_on:
+      pg-perms:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8008/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - piercemq
+
+  pg-sync:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    hostname: pg-sync
+    restart: always
+    ports:
+      - "8009:8008"
+    environment:
+      PATRONI_NAME: pg-sync
+      PATRONI_SCOPE: piercemq
+      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-sync:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-sync:8008
+    volumes:
+      - pgdata-sync:/var/lib/postgresql/data
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./docker/patroni/patroni-base.yml:/etc/patroni/patroni.yml:ro
+      - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    depends_on:
+      pg-perms:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_healthy
+      pg-leader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8008/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - piercemq
+
+  # Async replica for read offload (tags in patroni-async.yml: nosync).
+  pg-async:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    hostname: pg-async
+    restart: always
+    ports:
+      - "8010:8008"
+    environment:
+      PATRONI_NAME: pg-async
+      PATRONI_SCOPE: piercemq
+      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-async:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-async:8008
+    volumes:
+      - pgdata-async:/var/lib/postgresql/data
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./docker/patroni/patroni-async.yml:/etc/patroni/patroni.yml:ro
+      - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    depends_on:
+      pg-perms:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_healthy
+      pg-leader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8008/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - piercemq
+
+  # DR replica + pgBackRest repo owner (tags in patroni-backup.yml:
+  # nosync + noloadbalance, so HAProxy excludes it from the read pool).
+  # Full backup: docker compose exec pg-backup pgbackrest --stanza=piercemq backup
+  pg-backup:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    hostname: pg-backup
+    restart: always
+    ports:
+      - "8011:8008"
+    environment:
+      PATRONI_NAME: pg-backup
+      PATRONI_SCOPE: piercemq
+      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-backup:5432
+      PATRONI_RESTAPI_CONNECT_ADDRESS: pg-backup:8008
+    volumes:
+      - pgdata-backup:/var/lib/postgresql/data
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./docker/patroni/patroni-backup.yml:/etc/patroni/patroni.yml:ro
+      - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    depends_on:
+      pg-perms:
+        condition: service_completed_successfully
+      etcd:
+        condition: service_healthy
+      pg-leader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8008/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - piercemq
+
+  # --- One-shot: create the piercemq db + pgBackRest stanza once the
+  # leader is up. Idempotent (createdb/stanza-create tolerate re-runs).
+  db-init:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.patroni
+    user: postgres
+    command:
+      - sh
+      - -c
+      - 'until curl -sf http://pg-leader:8008/primary >/dev/null; do echo waiting-for-primary; sleep 2; done; export PGPASSWORD="$$POSTGRES_PASSWORD"; createdb -h pg-leader -U postgres -O admin piercemq || true; pgbackrest --stanza=piercemq stanza-create || true'
+    environment:
+      POSTGRES_PASSWORD: admin
+    volumes:
+      - pgbackrest-repo:/var/lib/pgbackrest
+      - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+    depends_on:
+      pg-leader:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - piercemq
+
+  # --- Stable endpoints across failover. pg-rw follows the primary,
+  # pg-ro round-robins healthy replicas (pg-backup excluded by noloadbalance).
+  haproxy:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.haproxy
+    restart: always
+    ports:
+      - "5432:5432" # pg-rw (primary) - local psql/debugging
+      - "5433:5433" # pg-ro (replicas) - local psql/debugging
+      - "8404:8404" # stats page
+    depends_on:
+      pg-leader:
+        condition: service_healthy
+      pg-sync:
+        condition: service_healthy
+      pg-async:
+        condition: service_healthy
+      pg-backup:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8404/stats || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piercemq
+
+  # --- Connection pooling in transaction mode.
+  # piercemq    -> pg-rw (writes, sync-replicated on commit)
+  # piercemq_ro -> pg-ro (reads, async replicas)
+  pgbouncer:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.pgbouncer
+    restart: always
+    ports:
+      - "6432:6432"
+    depends_on:
+      haproxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U admin -d piercemq || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - piercemq
+
   redis:
     image: redis:alpine3.22
     restart: always
@@ -28,12 +270,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - piercemq
   web:
-    build: 
+    build:
       context: .
       dockerfile: ./docker/Dockerfile.web
-    ports: 
+    ports:
       - "3000:3000"
+    networks:
+      - piercemq
     #develop:
     #  watch:
     #    - action: sync
@@ -41,18 +287,20 @@ services:
     #      target: ./
 
   workers:
-    build: 
+    build:
       context: .
       dockerfile: ./docker/Dockerfile.worker
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
+      pgbouncer:
         condition: service_healthy
       api:
         condition: service_healthy
     environment:
       READIS_ADDR: redis:6379
+    networks:
+      - piercemq
     #develop:
     #  watch:
     #    - action: sync
@@ -60,20 +308,23 @@ services:
     #      target: ./
 
   api:
-    build: 
+    build:
       context: .
       dockerfile: ./docker/Dockerfile.api
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
+      pgbouncer:
         condition: service_healthy
     environment:
       READIS_ADDR: redis:6379
-      DB_ADDR: postgres://admin:admin@data-store:5432/PierceMQ_TestDB?sslmode=disabled
+      DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
+      DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
       ENV: development
     ports:
       - "8000:8000"
+    networks:
+      - piercemq
     #develop:
     #  watch:
     #    - action: sync
@@ -81,5 +332,13 @@ services:
     #      target: ./
 
 volumes:
-  pgdata:
+  pgdata-leader:
+  pgdata-sync:
+  pgdata-async:
+  pgdata-backup:
+  pgbackrest-repo:
+  etcd-data:
   redisdata:
+
+networks:
+  piercemq:

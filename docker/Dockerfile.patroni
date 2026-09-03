@@ -1,0 +1,20 @@
+FROM postgres:17-alpine
+
+# Patroni (HA/failover) + pgBackRest (WAL archiving / DR backups) on PG17.
+# One image for all 4 PG nodes plus the db-init / pg-perms one-shots.
+# Config comes from a mounted patroni-*.yml plus PATRONI_* env vars
+# (see docker/patroni/ and docker-compose.yaml). Runs as postgres;
+# fresh volume ownership is fixed by the pg-perms one-shot service.
+RUN apk add --no-cache python3 py3-pip pgbackrest curl \
+ && apk add --no-cache --virtual .build-deps \
+        gcc musl-dev python3-dev libffi-dev openssl-dev postgresql-dev \
+ && pip install --break-system-packages --no-cache-dir "patroni[etcd]" \
+ && apk del .build-deps \
+ && patroni --version \
+ && pgbackrest version
+
+USER postgres
+
+EXPOSE 5432 8008
+
+CMD ["patroni", "/etc/patroni/patroni.yml"]
