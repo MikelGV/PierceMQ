@@ -6,21 +6,23 @@ import (
 )
 
 type Config struct {
-	Port     string
-	Host     string
-	RedisURI string
-	PSQLURI  string
-	DB_URL   string
+	Port        string
+	Host        string
+	RedisURI    string
+	PSQLURI     string
+	DB_URL      string
+	DB_READ_URL string
 }
 
 var Env = initConfig()
 
 func initConfig() Config {
 	return Config{
-		Port:     getEnv("PORT", "8080"),
-		Host:     getEnv("HOST", "0.0.0.0"),
-		RedisURI: getEnv("RedisURI", "redis://1234567890ca@localhost:6379/0"),
-		DB_URL:   getEnv("DBURL", ""),
+		Port:        getEnv("PORT", "8080"),
+		Host:        getEnv("HOST", "0.0.0.0"),
+		RedisURI:    getEnv("RedisURI", "redis://1234567890ca@localhost:6379/0"),
+		DB_URL:      getEnv("DB_URL", "postgres://admin:admin@localhost:6432/piercemq?sslmode=disable"),
+		DB_READ_URL: getEnv("DB_READ_URL", "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"),
 	}
 }
 

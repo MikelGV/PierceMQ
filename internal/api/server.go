@@ -13,13 +13,39 @@ import (
 
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
+	"github.com/MikelGV/PierceMQ/internal/storage"
 )
 
 func NewServer(
 	rds *broker.RedisStore,
 	config *config.Config,
+	stores *storage.Stores,
 ) http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		if err := rds.Conn.Ping(ctx).Err(); err != nil {
+			http.Error(w, fmt.Sprintf("redis: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+		if stores != nil && stores.Write != nil {
+			if err := stores.Write.Conn.PingContext(ctx); err != nil {
+				http.Error(w, fmt.Sprintf("db write: %v", err), http.StatusServiceUnavailable)
+				return
+			}
+		}
+		if stores != nil && stores.Read != nil {
+			if err := stores.Read.Conn.PingContext(ctx); err != nil {
+				http.Error(w, fmt.Sprintf("db read: %v", err), http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 
 	var handler http.Handler = mux
 
@@ -56,9 +82,18 @@ func Run(
 		return fmt.Errorf("Failed to connect to redis: %s\n", err)
 	}
 
+	// Fail fast when Postgres (via PgBouncer) is unreachable so the
+	// container restarts instead of serving without a database.
+	stores, err := storage.Connect(ctx, config.Env.DB_URL, config.Env.DB_READ_URL)
+	if err != nil {
+		rds.Conn.Close()
+		return fmt.Errorf("Failed to connect to db: %s\n", err)
+	}
+
 	srvr := NewServer(
 		rds,
 		&config.Config{},
+		stores,
 	)
 
 	httpServer := &http.Server{
@@ -78,6 +113,7 @@ func Run(
 
 	go func() {
 		defer rds.Conn.Close()
+		defer stores.Close()
 		go GracefulShutDown(&wg, ctx, httpServer)
 	}()
 
