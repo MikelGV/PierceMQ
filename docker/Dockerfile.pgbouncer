@@ -1,4 +1,4 @@
-FROM pgbouncer/pgbouncer:1.24.0
+FROM edoburu/pgbouncer:latest
 
 # postgresql-client only for the pg_isready container healthcheck.
 # Works whether the base is debian- or alpine-based.
