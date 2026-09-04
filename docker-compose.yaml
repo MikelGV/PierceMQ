@@ -208,6 +208,27 @@ services:
     networks:
       - piercemq
 
+  # --- One-shot: apply embedded schema migrations (migrations/*.sql
+  # via `api migrate up`) against the WRITE pool once the db exists.
+  # Single runner by design: api replicas never migrate, so there is no
+  # concurrent-migrate race. Fails the container on error so a bad
+  # migration blocks api boot instead of serving without schema.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.api
+    command: ["/api", "migrate", "up"]
+    environment:
+      DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - piercemq
+
   # --- Stable endpoints across failover. pg-rw follows the primary,
   # pg-ro round-robins healthy replicas (pg-backup excluded by noloadbalance).
   haproxy:
@@ -316,6 +337,8 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     environment:
       READIS_ADDR: redis:6379
       DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable

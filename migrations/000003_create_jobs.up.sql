@@ -1,0 +1,20 @@
+CREATE TABLE jobs (
+    job_id UUID NOT NULL,
+    status job_status NOT NULL,
+    type TEXT NOT NULL,
+    payload_ref TEXT,
+    queue_name TEXT NOT NULL,
+    priority SMALLINT DEFAULT 0,
+    attempt_count SMALLINT DEFAULT 0,
+    max_retry SMALLINT DEFAULT 3,
+    worker_id TEXT,
+    claim_token UUID,
+    idempotency_key TEXT,
+    scheduled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    last_error TEXT,
+    PRIMARY KEY (job_id, created_at)
+) PARTITION BY RANGE (created_at);
