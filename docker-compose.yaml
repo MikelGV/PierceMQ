@@ -58,7 +58,7 @@ services:
     environment:
       PATRONI_NAME: pg-leader
       PATRONI_SCOPE: piercemq
-      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_ETCD3_HOSTS: etcd:2379
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-leader:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: pg-leader:8008
     volumes:
@@ -90,7 +90,7 @@ services:
     environment:
       PATRONI_NAME: pg-sync
       PATRONI_SCOPE: piercemq
-      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_ETCD3_HOSTS: etcd:2379
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-sync:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: pg-sync:8008
     volumes:
@@ -125,7 +125,7 @@ services:
     environment:
       PATRONI_NAME: pg-async
       PATRONI_SCOPE: piercemq
-      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_ETCD3_HOSTS: etcd:2379
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-async:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: pg-async:8008
     volumes:
@@ -162,7 +162,7 @@ services:
     environment:
       PATRONI_NAME: pg-backup
       PATRONI_SCOPE: piercemq
-      PATRONI_ETCD_HOSTS: etcd:2379
+      PATRONI_ETCD3_HOSTS: etcd:2379
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: pg-backup:5432
       PATRONI_RESTAPI_CONNECT_ADDRESS: pg-backup:8008
     volumes:
@@ -293,14 +293,14 @@ services:
       retries: 5
     networks:
       - piercemq
-  web:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.web
-    ports:
-      - "3000:3000"
-    networks:
-      - piercemq
+  #web:
+  #  build:
+  #    context: .
+  #    dockerfile: ./docker/Dockerfile.web
+  #  ports:
+  #    - "3000:3000"
+  #  networks:
+  #    - piercemq
     #develop:
     #  watch:
     #    - action: sync

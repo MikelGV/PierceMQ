@@ -12,7 +12,7 @@ restapi:
   listen: 0.0.0.0:8008
   connect_address: pg-node:8008 # overridden via PATRONI_RESTAPI_CONNECT_ADDRESS
 
-etcd:
+etcd3:
   hosts: etcd:2379
   protocol: http
 
