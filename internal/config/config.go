@@ -20,7 +20,7 @@ func initConfig() Config {
 	return Config{
 		Port:        getEnv("PORT", "8080"),
 		Host:        getEnv("HOST", "0.0.0.0"),
-		RedisURI:    getEnv("RedisURI", "redis://1234567890ca@localhost:6379/0"),
+		RedisURI:    getEnv("REDIS_ADDR", getEnv("RedisURI", "redis://1234567890ca@localhost:6379/0")),
 		DB_URL:      getEnv("DB_URL", "postgres://admin:admin@localhost:6432/piercemq?sslmode=disable"),
 		DB_READ_URL: getEnv("DB_READ_URL", "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"),
 	}

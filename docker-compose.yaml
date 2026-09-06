@@ -217,7 +217,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.api
-    command: ["/api", "migrate", "up"]
+    command: ["migrate", "up"]
     environment:
       DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
     depends_on:
@@ -319,7 +319,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      READIS_ADDR: redis:6379
+      REDIS_ADDR: redis://123456890ca@redis:6379/0
     networks:
       - piercemq
     #develop:
@@ -340,7 +340,7 @@ services:
       db-migrate:
         condition: service_completed_successfully
     environment:
-      READIS_ADDR: redis:6379
+      REDIS_ADDR: redis://123456890ca@redis:6379/0
       DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
       DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
       ENV: development

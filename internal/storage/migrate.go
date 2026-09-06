@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/MikelGV/PierceMQ/migrations"
@@ -19,24 +18,17 @@ import (
 // from the db-migrate one-shot only, never from api replicas, so there is
 // no concurrent-migrate race to guard against.
 //
-// dsn must target the WRITE pool (PgBouncer `piercemq` -> primary).
+// dsn must target the WRITE pool (PgBouncer `piercemq` -> primary) and
+// contain only real Postgres connection parameters. In particular, never
+// append migrate driver options (e.g. x-multi-statement) to it: pgx
+// forwards unknown query params as startup parameters and PgBouncer (like
+// Postgres itself) rejects them with FATAL 08P01. Driver options belong
+// on postgres.Config below.
 // Plain DDL is safe in PgBouncer transaction mode; do not use
-// CONCURRENTLY operations or session-level statements. Multi-statement
-// files are enabled automatically via x-multi-statement=true.
+// CONCURRENTLY operations or session-level statements.
 func openMigrate(ctx context.Context, dsn string) (*migrate.Migrate, *sql.DB, error) {
 	if dsn == "" {
 		return nil, nil, fmt.Errorf("storage: empty DSN")
-	}
-
-	// Multi-statement migration files (e.g. partition bootstraps) need
-	// the driver's x-multi-statement mode, which splits files on ';'.
-	// Single-statement files behave identically with it on.
-	if !strings.Contains(dsn, "x-multi-statement") {
-		sep := "?"
-		if strings.Contains(dsn, "?") {
-			sep = "&"
-		}
-		dsn += sep + "x-multi-statement=true"
 	}
 
 	db, err := sql.Open("pgx", dsn)
@@ -60,7 +52,10 @@ func openMigrate(ctx context.Context, dsn string) (*migrate.Migrate, *sql.DB, er
 		return nil, nil, fmt.Errorf("storage: migrate source: %w", err)
 	}
 
-	dbi, err := postgres.WithInstance(db, &postgres.Config{})
+	// MultiStatementEnabled splits multi-statement files (e.g. partition
+	// bootstraps) on ';' in-process. Single-statement files behave
+	// identically with it on.
+	dbi, err := postgres.WithInstance(db, &postgres.Config{MultiStatementEnabled: true})
 	if err != nil {
 		db.Close()
 		return nil, nil, fmt.Errorf("storage: migrate driver: %w", err)
