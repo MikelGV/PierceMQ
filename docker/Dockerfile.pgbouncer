@@ -1,10 +1,11 @@
 FROM edoburu/pgbouncer:latest
 
-# postgresql-client only for the pg_isready container healthcheck.
-# Works whether the base is debian- or alpine-based.
-RUN (apt-get update && apt-get install -y --no-install-recommends postgresql-client \
-      && rm -rf /var/lib/apt/lists/*) \
- || (apk add --no-cache postgresql-client)
+# Base image runs as USER postgres (non-root): escalate for apk,
+# then drop back. postgresql-client only for the pg_isready
+# container healthcheck.
+USER root
+RUN apk add --no-cache postgresql-client
+USER postgres
 
-COPY docker/pgbouncer/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
-COPY docker/pgbouncer/userlist.txt /etc/pgbouncer/userlist.txt
+COPY --chown=postgres:postgres docker/pgbouncer/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
+COPY --chown=postgres:postgres docker/pgbouncer/userlist.txt /etc/pgbouncer/userlist.txt

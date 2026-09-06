@@ -8,7 +8,7 @@ FROM postgres:17-alpine
 RUN apk add --no-cache python3 py3-pip pgbackrest curl \
  && apk add --no-cache --virtual .build-deps \
         gcc musl-dev python3-dev libffi-dev openssl-dev postgresql-dev \
- && pip install --break-system-packages --no-cache-dir "patroni[etcd]" \
+ && pip install --break-system-packages --no-cache-dir "patroni[etcd]" "psycopg[binary]" \
  && apk del .build-deps \
  && patroni --version \
  && pgbackrest version

@@ -1,6 +1,9 @@
 FROM haproxy:3.0-alpine
 
-# curl only for the container healthcheck against the stats page.
+# Base image runs as USER haproxy (non-root): escalate for apk,
+# then drop back. curl only for the stats-page healthcheck.
+USER root
 RUN apk add --no-cache curl
+USER haproxy
 
-COPY docker/haproxy/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
+COPY --chown=haproxy:haproxy docker/haproxy/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
