@@ -7,5 +7,5 @@ USER root
 RUN apk add --no-cache postgresql-client
 USER postgres
 
-COPY --chown=postgres:postgres docker/pgbouncer/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
-COPY --chown=postgres:postgres docker/pgbouncer/userlist.txt /etc/pgbouncer/userlist.txt
+COPY --chown=postgres:postgres --chmod=600 docker/pgbouncer/pgbouncer.ini /etc/pgbouncer/pgbouncer.ini
+COPY --chown=postgres:postgres --chmod=600 docker/pgbouncer/userlist.txt /etc/pgbouncer/userlist.txt

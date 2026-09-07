@@ -185,8 +185,12 @@ services:
     networks:
       - piercemq
 
-  # --- One-shot: create the piercemq db + pgBackRest stanza once the
-  # leader is up. Idempotent (createdb/stanza-create tolerate re-runs).
+  # --- One-shot: create the admin role + piercemq db + pgBackRest stanza
+  # once the leader is up. Idempotent (IF NOT EXISTS / createdb /
+  # stanza-create tolerate re-runs). The role step duplicates bootstrap
+  # `users:` on purpose: if initdb already ran without it, this still
+  # guarantees the role exists. $$ escapes survive compose interpolation
+  # (single-quoted strings are interpolated too), reaching sh as single $.
   db-init:
     build:
       context: .
@@ -195,9 +199,10 @@ services:
     command:
       - sh
       - -c
-      - 'until curl -sf http://pg-leader:8008/primary >/dev/null; do echo waiting-for-primary; sleep 2; done; export PGPASSWORD="$$POSTGRES_PASSWORD"; createdb -h pg-leader -U postgres -O admin piercemq || true; pgbackrest --stanza=piercemq stanza-create || true'
+      - 'until curl -sf http://pg-leader:8008/primary >/dev/null; do echo waiting-for-primary; sleep 2; done; export PGPASSWORD="$$POSTGRES_PASSWORD"; psql -h pg-leader -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname = ''admin''" | grep -q 1 || psql -h pg-leader -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE admin LOGIN CREATEDB PASSWORD ''$$APP_DB_PASSWORD''"; createdb -h pg-leader -U postgres -O admin piercemq || true; pgbackrest --stanza=piercemq --no-online stanza-create || true'
     environment:
       POSTGRES_PASSWORD: admin
+      APP_DB_PASSWORD: admin
     volumes:
       - pgbackrest-repo:/var/lib/pgbackrest
       - ./docker/patroni/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
@@ -319,7 +324,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      REDIS_ADDR: redis://123456890ca@redis:6379/0
+      REDIS_ADDR: redis://:123456890ca@redis:6379/0
     networks:
       - piercemq
     #develop:
@@ -340,12 +345,18 @@ services:
       db-migrate:
         condition: service_completed_successfully
     environment:
-      REDIS_ADDR: redis://123456890ca@redis:6379/0
+      REDIS_ADDR: redis://:123456890ca@redis:6379/0
       DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
       DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
       ENV: development
+      PORT: "8000"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - piercemq
     #develop:

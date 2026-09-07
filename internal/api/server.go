@@ -111,10 +111,15 @@ func Run(
 	var wg sync.WaitGroup
 	wg.Add(1)
 
+	// NOTE: the defers must fire when GracefulShutDown RETURNS (at
+	// shutdown), not when this goroutine is spawned. A nested `go`
+	// here would run them immediately at boot, closing Redis and both
+	// DB pools while the server is still running (every /healthz after
+	// boot would 503).
 	go func() {
 		defer rds.Conn.Close()
 		defer stores.Close()
-		go GracefulShutDown(&wg, ctx, httpServer)
+		GracefulShutDown(&wg, ctx, httpServer)
 	}()
 
 	wg.Wait()

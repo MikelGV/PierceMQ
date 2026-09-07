@@ -37,8 +37,8 @@ bootstrap:
     - encoding: UTF8
     - data-checksums
   pg_hba:
-    - host replication replicator all md5
-    - host all all all md5
+    - host replication replicator all scram-sha-256
+    - host all all all scram-sha-256
   users:
     admin:
       password: admin # dev default; keep alphanumeric
@@ -63,8 +63,8 @@ postgresql:
     archive_mode: "on"
     archive_command: 'pgbackrest --stanza=piercemq archive-push %p'
   pg_hba:
-    - host replication replicator all md5
-    - host all all all md5
+    - host replication replicator all scram-sha-256
+    - host all all all scram-sha-256
 
 tags:
   nosync: false
