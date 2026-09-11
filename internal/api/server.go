@@ -11,43 +11,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MikelGV/PierceMQ/internal/api/routes"
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
 	"github.com/MikelGV/PierceMQ/internal/storage"
+	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
+	"github.com/MikelGV/PierceMQ/internal/storage/users"
 )
 
-func NewServer(
-	rds *broker.RedisStore,
-	config *config.Config,
-	stores *storage.Stores,
-) http.Handler {
+func NewServer(d routes.Deps) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-
-		if err := rds.Conn.Ping(ctx).Err(); err != nil {
-			http.Error(w, fmt.Sprintf("redis: %v", err), http.StatusServiceUnavailable)
-			return
-		}
-		if stores != nil && stores.Write != nil {
-			if err := stores.Write.Conn.PingContext(ctx); err != nil {
-				http.Error(w, fmt.Sprintf("db write: %v", err), http.StatusServiceUnavailable)
-				return
-			}
-		}
-		if stores != nil && stores.Read != nil {
-			if err := stores.Read.Conn.PingContext(ctx); err != nil {
-				http.Error(w, fmt.Sprintf("db read: %v", err), http.StatusServiceUnavailable)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	routes.AddRoutes(mux, d)
 
 	var handler http.Handler = mux
+	// Here we set up the middleware like cors or things like that.
 
 	return handler
 }
@@ -90,11 +68,13 @@ func Run(
 		return fmt.Errorf("Failed to connect to db: %s\n", err)
 	}
 
-	srvr := NewServer(
-		rds,
-		&config.Config{},
-		stores,
-	)
+	srvr := NewServer(routes.Deps{
+		Redis:  rds,
+		Config: &config.Config{},
+		Stores: stores,
+		Users:  users.New(stores.Write.Conn, stores.Read.Conn),
+		Jobs:   jobs.New(stores.Write.Conn, stores.Read.Conn),
+	})
 
 	httpServer := &http.Server{
 		Addr:    net.JoinHostPort(config.Env.Host, config.Env.Port),
