@@ -2,13 +2,16 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/dispatcher"
+	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -50,7 +53,7 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 
 			if len(claimed) > 0 {
 				fmt.Printf("claimed %d stale messages", len(claimed))
-				rds.ProcessJobs(ctx, claimed, dispatcher, streamName, groupName)
+				rds.ProcessJobs(ctx, claimed, dispatcher, streamName, groupName, consumerName)
 			}
 
 		default:
@@ -76,7 +79,7 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 			}
 
 			for _, streams := range res {
-				rds.ProcessJobs(ctx, streams.Messages, dispatcher, streamName, groupName)
+				rds.ProcessJobs(ctx, streams.Messages, dispatcher, streamName, groupName, consumerName)
 			}
 
 		}
@@ -84,8 +87,14 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 	}
 }
 
-func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessage, d *dispatcher.Dispatcher, streamName, groupName string) {
+func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessage, d *dispatcher.Dispatcher, streamName, groupName, workerID string) {
 	for _, msg := range messages {
+		// DB-first path: stream carries a job ref (job_id + metadata).
+		if ref, err := task.JobFromFields(msg.Values); err == nil {
+			rds.processRef(ctx, msg, ref, d, streamName, groupName, workerID)
+			continue
+		}
+		// Legacy path: bare TaskRequest payload, no DB row.
 		taskreq, err := task.FromFields(msg.Values)
 		if err != nil {
 			fmt.Printf("Malformed message %s: %v — moving to DLQ\n", msg.ID, err)
@@ -94,11 +103,11 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessag
 		}
 
 		job := &task.Job{
-			ID:          msg.ID,
-			TYPE:        taskreq.Type,
-			PAYLOAD:     taskreq.Payload,
-			ATTEMPT:     taskreq.Attempt,
-			MAX_RETRIES: maxRetries,
+			MsgID:        msg.ID,
+			Type:         taskreq.Type,
+			Payload:      taskreq.Payload,
+			AttemptCount: int16(taskreq.Attempt),
+			MaxRetry:     maxRetries,
 		}
 
 		err = d.DispatchTask(ctx, job)
@@ -110,6 +119,59 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessag
 
 	}
 
+}
+
+// processRef handles one DB-first stream message: claim the PG row to
+// running, then dispatch. Redis-only mode (rds.Jobs == nil) dispatches the
+// ref as-is. Not-claimable rows (owned/completed elsewhere) are acked +
+// skipped: PG is the source of truth, the owner drives them.
+func (rds *RedisStore) processRef(ctx context.Context, msg redis.XMessage, ref *task.Job, d *dispatcher.Dispatcher, streamName, groupName, workerID string) {
+	job := &task.Job{
+		JobID:        ref.JobID,
+		MsgID:        msg.ID,
+		Status:       ref.Status,
+		Type:         ref.Type,
+		Payload:      ref.Payload,
+		PayloadRef:   ref.PayloadRef,
+		QueueName:    ref.QueueName,
+		Priority:     ref.Priority,
+		AttemptCount: ref.AttemptCount,
+		MaxRetry:     ref.MaxRetry,
+		CreatedAt:    ref.CreatedAt,
+		ScheduledAt:  ref.ScheduledAt,
+	}
+
+	if rds.Jobs != nil {
+		claimed, token, err := rds.Jobs.ClaimRunning(ctx, ref.JobID, workerID)
+		if err != nil {
+			if errors.Is(err, jobs.ErrNotClaimable) {
+				fmt.Printf("Job %s not claimable, acking stream msg %s\n", ref.JobID, msg.ID)
+				_, _ = rds.AckJob(ctx, streamName, groupName, msg.ID)
+				return
+			}
+			fmt.Printf("Claim %s failed: %v\n", ref.JobID, err)
+			return
+		}
+		job.Status = claimed.Status
+		job.AttemptCount = claimed.AttemptCount
+		job.MaxRetry = claimed.MaxRetry
+		job.Priority = claimed.Priority
+		job.ClaimToken = uuid.NullUUID{UUID: token, Valid: true}
+		if claimed.Payload != nil {
+			job.Payload = claimed.Payload
+		}
+		if claimed.PayloadRef.Valid {
+			job.PayloadRef = claimed.PayloadRef
+		}
+	}
+
+	if err := d.DispatchTask(ctx, job); err != nil {
+		fmt.Printf("Failed to dispatch job %s: %v\n", ref.JobID, err)
+		if rds.Jobs != nil && job.ClaimToken.Valid {
+			_, _ = rds.Jobs.FailOrRetry(ctx, job.JobID, job.ClaimToken.UUID, "dispatch failed")
+		}
+		rds.HandleJobFailure(ctx, msg.ID, streamName, groupName, int(job.AttemptCount))
+	}
 }
 
 /**

@@ -11,6 +11,10 @@ import (
 
 type RedisStore struct {
 	Conn *redis.Client
+	// Jobs is the worker-side PG handle for claim/complete. Nil means
+	// Redis-only mode (tests, or pools without a database); the consume
+	// path then dispatches stream payloads without DB transitions.
+	Jobs JobStore
 }
 
 // Re-export queue constants for backward compatibility; canonical source is internal/queue.

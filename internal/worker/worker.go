@@ -17,7 +17,10 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/dispatcher"
 	"github.com/MikelGV/PierceMQ/internal/queue"
+	"github.com/MikelGV/PierceMQ/internal/storage"
+	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -288,6 +291,15 @@ func (wo *Worker) runPool(ctx context.Context, w io.Writer, getenv func(string) 
 	}
 	defer store.Conn.Close()
 
+	// PG handle for claim → running → heartbeat → completed/failed.
+	// Fail fast like the API: a pool without a database cannot advance jobs.
+	dbStores, err := storage.Connect(ctx, getenv("DB_URL"), getenv("DB_READ_URL"))
+	if err != nil {
+		return fmt.Errorf("pool %s: db connect failed: %w", poolType, err)
+	}
+	defer dbStores.Close()
+	store.Jobs = jobs.New(dbStores.Write.Conn, dbStores.Read.Conn)
+
 	poolSize := dynamicPoolSize(getenv)
 	fmt.Fprintf(w, "pool %s: starting dispatcher with %d workers (GOMAXPROCS=%d)\n", poolType, poolSize, runtime.GOMAXPROCS(0))
 
@@ -300,20 +312,20 @@ func (wo *Worker) runPool(ctx context.Context, w io.Writer, getenv func(string) 
 	switch poolType {
 	case "email":
 		d.Register("email", func(ctx context.Context, job *task.Job) error {
-			b, _ := json.Marshal(job.PAYLOAD)
-			_, err := wo.ProcessJobs(job.TYPE, string(b), ctx)
+			b, _ := json.Marshal(job.Payload)
+			_, err := wo.ProcessJobs(job.Type, string(b), ctx)
 			return err
 		})
 	case "file_processing":
 		d.Register("file", func(ctx context.Context, job *task.Job) error {
-			b, _ := json.Marshal(job.PAYLOAD)
-			_, err := wo.ProcessJobs(job.TYPE, string(b), ctx)
+			b, _ := json.Marshal(job.Payload)
+			_, err := wo.ProcessJobs(job.Type, string(b), ctx)
 			return err
 		})
 	case "exec_processing":
 		d.Register("exec", func(ctx context.Context, job *task.Job) error {
-			b, _ := json.Marshal(job.PAYLOAD)
-			_, err := wo.ProcessJobs(job.TYPE, string(b), ctx)
+			b, _ := json.Marshal(job.Payload)
+			_, err := wo.ProcessJobs(job.Type, string(b), ctx)
 			return err
 		})
 	}
@@ -374,6 +386,39 @@ func (wo *Worker) runPool(ctx context.Context, w io.Writer, getenv func(string) 
 	}
 }
 
+func hasClaim(store *broker.RedisStore, job *task.Job) bool {
+	return store != nil && store.Jobs != nil && job != nil &&
+		job.JobID != uuid.Nil && job.ClaimToken.Valid
+}
+
+// heartbeatJob refreshes the PG claim every 5s until hbCtx is done.
+func heartbeatJob(hbCtx context.Context, store *broker.RedisStore, job *task.Job) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-hbCtx.Done():
+			return
+		case <-t.C:
+			_ = store.Jobs.Heartbeat(hbCtx, job.JobID, job.ClaimToken.UUID)
+		}
+	}
+}
+
+// failJob records the PG failure (retry or terminal) and requeues/DLQs
+// the stream message via the existing retry machinery. Legacy jobs
+// (no claim) only get the stream path.
+func failJob(ctx context.Context, store *broker.RedisStore, logW io.Writer, wkr *Worker, job *task.Job, err error) {
+	if hasClaim(store, job) {
+		if _, ferr := store.Jobs.FailOrRetry(ctx, job.JobID, job.ClaimToken.UUID, err.Error()); ferr != nil {
+			fmt.Fprintf(logW, "pool %s worker %d fail failed %s: %v\n", wkr.PoolID, wkr.ID, job.JobID, ferr)
+		}
+	}
+	if job.MsgID != "" {
+		_ = store.HandleJobFailure(ctx, job.MsgID, streamForType(job.Type), groupForType(job.Type), int(job.AttemptCount))
+	}
+}
+
 func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW io.Writer, workerPoolCh chan *Worker, dispPool chan chan *task.Job) {
 	for {
 		select {
@@ -383,8 +428,8 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Fprintf(logW, "pool %s worker %d panic on job %s: %v\n", wkr.PoolID, wkr.ID, job.ID, r)
-						_ = store.HandleJobFailure(ctx, job.ID, streamForType(job.TYPE), groupForType(job.TYPE), job.ATTEMPT)
+						fmt.Fprintf(logW, "pool %s worker %d panic on job %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, r)
+						failJob(ctx, store, logW, wkr, job, fmt.Errorf("panic: %v", r))
 					}
 					select {
 					case workerPoolCh <- wkr:
@@ -397,7 +442,7 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 				}()
 
 				var payloadStr string
-				switch v := job.PAYLOAD.(type) {
+				switch v := job.Payload.(type) {
 				case string:
 					payloadStr = v
 				case []byte:
@@ -409,17 +454,33 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 						payloadStr = fmt.Sprintf("%v", v)
 					}
 				}
-				result, err := wkr.ProcessJobs(job.TYPE, payloadStr, ctx)
+
+				// Per-job PG heartbeat while the handler runs. Stops when
+				// the handler returns (hbCancel). No-op for legacy jobs.
+				hbCtx, hbCancel := context.WithCancel(ctx)
+				defer hbCancel()
+				if hasClaim(store, job) {
+					go heartbeatJob(hbCtx, store, job)
+				}
+
+				result, err := wkr.ProcessJobs(job.Type, payloadStr, ctx)
 				if err != nil {
-					fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.ID, job.TYPE, err)
-					_ = store.HandleJobFailure(ctx, job.ID, streamForType(job.TYPE), groupForType(job.TYPE), job.ATTEMPT)
+					fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.MsgID, job.Type, err)
+					failJob(ctx, store, logW, wkr, job, err)
 					return
 				}
-				stream := streamForType(job.TYPE)
-				group := groupForType(job.TYPE)
+				// DB-first, then ack: a crash between leaves a completed
+				// row whose redeliveries the claim status guard absorbs.
+				if hasClaim(store, job) {
+					if err := store.Jobs.Complete(ctx, job.JobID, job.ClaimToken.UUID); err != nil {
+						fmt.Fprintf(logW, "pool %s worker %d complete failed %s: %v\n", wkr.PoolID, wkr.ID, job.JobID, err)
+					}
+				}
+				stream := streamForType(job.Type)
+				group := groupForType(job.Type)
 				if stream != "" && group != "" {
-					if _, ackErr := store.AckJob(ctx, stream, group, job.ID); ackErr != nil {
-						fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.ID, ackErr)
+					if _, ackErr := store.AckJob(ctx, stream, group, job.MsgID); ackErr != nil {
+						fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, ackErr)
 					} else {
 						_ = result
 					}
