@@ -401,10 +401,10 @@ func TestHandleJobFailure(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, len(pending), "expected all malformed messages to be moved to DLQ")
 
-		dlqKey := "dlq:email"
+		dlqKey := "dlq:queue:email:low"
 		dlqLen, err := store.Conn.XLen(context.Background(), dlqKey).Result()
 		require.NoError(t, err)
-		require.GreaterOrEqual(t, dlqLen, int64(3), "expected malformed messages in DLQ")
+		require.Equal(t, int64(3), dlqLen, "expected each malformed message in DLQ exactly once")
 
 		t.Logf("Logical failures test: %d messages moved to DLQ (as expected)", dlqLen)
 	})

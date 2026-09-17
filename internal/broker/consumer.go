@@ -307,8 +307,15 @@ func getAttempt(values map[string]any) int {
 	return 0
 }
 
+// dlqStream maps a source stream to its per-stream dead-letter stream,
+// preserving priority separation: stream:queue:email:low becomes
+// dlq:queue:email:low. DLQ streams have no consumer group, so moved copies
+// sit exactly once instead of looping back into the source.
 func dlqStream(streamName string) string {
-	return strings.Replace(streamName, "tasks:", "dlq:", 1)
+	if rest, ok := strings.CutPrefix(streamName, "stream:"); ok {
+		return "dlq:" + rest
+	}
+	return "dlq:" + streamName
 }
 
 /**

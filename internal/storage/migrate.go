@@ -100,7 +100,7 @@ func MigrateDown(ctx context.Context, dsn string) error {
 		_, _ = m.Close()
 	}()
 
-	if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+	if err := m.Steps(-1); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("storage: migrate down: %w", err)
 	}
 	return nil
