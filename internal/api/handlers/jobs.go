@@ -1,4 +1,4 @@
-package routes
+package handlers
 
 import (
 	"database/sql"
@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MikelGV/PierceMQ/internal/auth"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/google/uuid"
 )
@@ -19,7 +20,7 @@ func NewJobsHandler(store *jobs.JobsStore) http.HandlerFunc {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		if _, ok := UserIDFromContext(r.Context()); !ok {
+		if _, ok := auth.UserIDFromContext(r.Context()); !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
 		}

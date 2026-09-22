@@ -1,4 +1,4 @@
-package routes
+package handlers
 
 import (
 	"database/sql"
@@ -6,16 +6,17 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/MikelGV/PierceMQ/internal/storage/auth"
+	"github.com/MikelGV/PierceMQ/internal/auth"
+	storageauth "github.com/MikelGV/PierceMQ/internal/storage/auth"
 	"github.com/google/uuid"
 )
 
 // NewAPIKeysHandler serves POST /v1/keys (create, plaintext shown once) and
 // GET /v1/keys (list, hashes never leave the DB). Caller must wrap with
 // RequireAuth; key-creation via API key is allowed (services can rotate).
-func NewAPIKeysHandler(store *auth.Store) http.HandlerFunc {
+func NewAPIKeysHandler(store *storageauth.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, ok := UserIDFromContext(r.Context())
+		userID, ok := auth.UserIDFromContext(r.Context())
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
@@ -69,14 +70,14 @@ func NewAPIKeysHandler(store *auth.Store) http.HandlerFunc {
 }
 
 // NewAPIKeyRevokeHandler serves POST /v1/keys/revoke {key_id}.
-func NewAPIKeyRevokeHandler(store *auth.Store) http.HandlerFunc {
+func NewAPIKeyRevokeHandler(store *storageauth.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		userID, ok := UserIDFromContext(r.Context())
+		userID, ok := auth.UserIDFromContext(r.Context())
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return

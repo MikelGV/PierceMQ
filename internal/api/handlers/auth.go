@@ -1,4 +1,4 @@
-package routes
+package handlers
 
 import (
 	"database/sql"
@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MikelGV/PierceMQ/internal/auth"
 	"github.com/MikelGV/PierceMQ/internal/storage/users"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type registerRequest struct {
@@ -41,12 +41,12 @@ func NewRegisterHandler(store *users.UsersStore) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name, valid email and password (min 8 chars) are required"})
 			return
 		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hash, err := auth.HashPassword(req.Password)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hashing failed"})
 			return
 		}
-		u, err := store.CreateUser(r.Context(), req.Name, req.Email, string(hash))
+		u, err := store.CreateUser(r.Context(), req.Name, req.Email, hash)
 		if err != nil {
 			if errors.Is(err, users.ErrUserExists) {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "email already taken"})
@@ -82,11 +82,11 @@ func NewLoginHandler(store *users.UsersStore, jwtSecret string, ttl time.Duratio
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "login failed"})
 			return
 		}
-		if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
+		if err := auth.VerifyPassword(u.PasswordHash, req.Password); err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 			return
 		}
-		token, expiresAt, err := IssueToken(u.UserID, jwtSecret, ttl)
+		token, expiresAt, err := auth.IssueToken(u.UserID, jwtSecret, ttl)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token issue failed"})
 			return

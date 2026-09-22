@@ -1,4 +1,4 @@
-package routes
+package auth
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Claims carries the user identity. Keep minimal: sub=user_id.
@@ -56,4 +57,18 @@ func ParseToken(raw, secret string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("auth: bad subject: %w", err)
 	}
 	return id, nil
+}
+
+// HashPassword hashes a plaintext password for storage.
+func HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("auth: password hashing failed: %w", err)
+	}
+	return string(hash), nil
+}
+
+// VerifyPassword compares a stored hash against a plaintext password.
+func VerifyPassword(hash, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }

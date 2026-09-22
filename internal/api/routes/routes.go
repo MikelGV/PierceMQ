@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MikelGV/PierceMQ/internal/api/handlers"
+	"github.com/MikelGV/PierceMQ/internal/api/middleware"
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
 	"github.com/MikelGV/PierceMQ/internal/storage"
-	"github.com/MikelGV/PierceMQ/internal/storage/auth"
+	storageauth "github.com/MikelGV/PierceMQ/internal/storage/auth"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/storage/users"
 )
@@ -21,7 +23,7 @@ type Deps struct {
 	Config *config.Config
 	Stores *storage.Stores
 	Users  *users.UsersStore
-	Keys   *auth.Store
+	Keys   *storageauth.Store
 	Jobs   *jobs.JobsStore
 }
 
@@ -40,15 +42,15 @@ func jwtSecret(cfg *config.Config) string {
 }
 
 func AddRoutes(mux *http.ServeMux, d Deps) {
-	mux.HandleFunc("/healthz", NewHealthHandler(d.Redis, d.Stores))
-	mux.HandleFunc("/v1/auth/register", NewRegisterHandler(d.Users))
-	mux.HandleFunc("/v1/auth/login", NewLoginHandler(d.Users, jwtSecret(d.Config), jwtTTL(d.Config)))
+	mux.HandleFunc("/healthz", handlers.NewHealthHandler(d.Redis, d.Stores))
+	mux.HandleFunc("/v1/auth/register", handlers.NewRegisterHandler(d.Users))
+	mux.HandleFunc("/v1/auth/login", handlers.NewLoginHandler(d.Users, jwtSecret(d.Config), jwtTTL(d.Config)))
 
 	authed := func(h http.Handler) http.HandlerFunc {
-		return RequireAuth(d.Users, d.Keys, jwtSecret(d.Config), h).ServeHTTP
+		return middleware.RequireAuth(d.Users, d.Keys, jwtSecret(d.Config), h).ServeHTTP
 	}
-	mux.HandleFunc("/v1/jobs", authed(NewEnqueueHandler(d.Jobs, d.Redis)))
-	mux.HandleFunc("/v1/jobs/", authed(NewJobsHandler(d.Jobs)))
-	mux.HandleFunc("/v1/keys", authed(NewAPIKeysHandler(d.Keys)))
-	mux.HandleFunc("/v1/keys/revoke", authed(NewAPIKeyRevokeHandler(d.Keys)))
+	mux.HandleFunc("/v1/jobs", authed(handlers.NewEnqueueHandler(d.Jobs, d.Redis)))
+	mux.HandleFunc("/v1/jobs/", authed(handlers.NewJobsHandler(d.Jobs)))
+	mux.HandleFunc("/v1/keys", authed(handlers.NewAPIKeysHandler(d.Keys)))
+	mux.HandleFunc("/v1/keys/revoke", authed(handlers.NewAPIKeyRevokeHandler(d.Keys)))
 }

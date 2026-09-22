@@ -1,4 +1,4 @@
-package routes
+package handlers
 
 import (
 	"database/sql"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MikelGV/PierceMQ/internal/auth"
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/queue"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
@@ -39,7 +40,7 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		if _, ok := UserIDFromContext(r.Context()); !ok {
+		if _, ok := auth.UserIDFromContext(r.Context()); !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
 		}

@@ -1,4 +1,4 @@
-package routes
+package auth
 
 import (
 	"testing"
@@ -25,5 +25,18 @@ func TestJWTRoundTrip(t *testing.T) {
 	}
 	if _, _, err := IssueToken(id, "", time.Hour); err == nil {
 		t.Fatal("IssueToken with empty secret should fail")
+	}
+}
+
+func TestPasswordRoundTrip(t *testing.T) {
+	hash, err := HashPassword("supersecret")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if err := VerifyPassword(hash, "supersecret"); err != nil {
+		t.Fatalf("VerifyPassword correct: %v", err)
+	}
+	if err := VerifyPassword(hash, "wrong"); err == nil {
+		t.Fatal("VerifyPassword wrong should fail")
 	}
 }
