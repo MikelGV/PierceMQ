@@ -15,6 +15,7 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
 	"github.com/MikelGV/PierceMQ/internal/storage"
+	"github.com/MikelGV/PierceMQ/internal/storage/auth"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/storage/users"
 )
@@ -70,9 +71,10 @@ func Run(
 
 	srvr := NewServer(routes.Deps{
 		Redis:  rds,
-		Config: &config.Config{},
+		Config: &config.Env,
 		Stores: stores,
 		Users:  users.New(stores.Write.Conn, stores.Read.Conn),
+		Keys:   auth.New(stores.Write.Conn, stores.Read.Conn),
 		Jobs:   jobs.New(stores.Write.Conn, stores.Read.Conn),
 	})
 

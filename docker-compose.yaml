@@ -350,6 +350,8 @@ services:
       DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
       ENV: development
       PORT: "8000"
+      JWT_SECRET: "dev-only-change-me"
+      JWT_TTL_HOURS: "24"
     ports:
       - "8000:8000"
     healthcheck:

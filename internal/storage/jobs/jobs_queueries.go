@@ -124,3 +124,51 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 	out.ScheduledAt = in.ScheduledAt
 	return out, nil
 }
+
+func (s *JobsStore) GetJobByID(ctx context.Context, jobID uuid.UUID) (task.Job, error) {
+	var out task.Job
+	if err := scanJobRow(&out, s.read.QueryRowContext(ctx,
+		`SELECT `+jobColumns+` FROM jobs WHERE job_id = $1`, jobID)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return out, sql.ErrNoRows
+		}
+		return out, fmt.Errorf("get job: %w", err)
+	}
+	hydratePayload(&out)
+	return out, nil
+}
+
+// JobEvent mirrors one job_events row for the status timeline. OldStatus is
+// nullable: the initial insert records old_status NULL.
+type JobEvent struct {
+	EventID   uuid.UUID
+	JobID     uuid.UUID
+	OldStatus sql.NullString
+	NewStatus task.JobStatus
+	WorkerID  sql.NullString
+	Reason    sql.NullString
+	Occurred  time.Time
+}
+
+// GetJobEvents returns the status timeline newest-last (read pool).
+func (s *JobsStore) GetJobEvents(ctx context.Context, jobID uuid.UUID) ([]JobEvent, error) {
+	rows, err := s.read.QueryContext(ctx,
+		`SELECT event_id, job_id, old_status, new_status, worker_id, reason, occurred_at
+		FROM job_events WHERE job_id = $1 ORDER BY occurred_at`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("list job events: %w", err)
+	}
+	defer rows.Close()
+	var out []JobEvent
+	for rows.Next() {
+		var e JobEvent
+		if err := rows.Scan(&e.EventID, &e.JobID, &e.OldStatus, &e.NewStatus, &e.WorkerID, &e.Reason, &e.Occurred); err != nil {
+			return nil, fmt.Errorf("scan job event: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows job events: %w", err)
+	}
+	return out, nil
+}

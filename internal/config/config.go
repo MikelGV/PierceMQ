@@ -12,6 +12,8 @@ type Config struct {
 	PSQLURI     string
 	DB_URL      string
 	DB_READ_URL string
+	JWTSecret   string
+	JWTTTLHours int64
 }
 
 var Env = initConfig()
@@ -23,6 +25,8 @@ func initConfig() Config {
 		RedisURI:    getEnv("REDIS_ADDR", getEnv("RedisURI", "redis://:1234567890ca@localhost:6379/0")),
 		DB_URL:      getEnv("DB_URL", "postgres://admin:admin@localhost:6432/piercemq?sslmode=disable"),
 		DB_READ_URL: getEnv("DB_READ_URL", "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"),
+		JWTSecret:   getEnv("JWT_SECRET", "dev-only-change-me"),
+		JWTTTLHours: getIntEnv("JWT_TTL_HOURS", 24),
 	}
 }
 

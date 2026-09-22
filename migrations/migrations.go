@@ -31,6 +31,9 @@ import "embed"
 //     IF NOT EXISTS so a dirty-repaired v6 re-runs cleanly.
 //   - 000007 bootstraps job_events monthlies Sep-Nov 2026 + DEFAULT.
 //   - Partition coverage ends Nov 2026: add next monthlies before Dec 2026.
+//   - 000008 creates users (auth MVP: email unique, bcrypt password_hash).
+//   - 000009 creates api_keys (SHA256 key_hash unique, per-user lookup
+//     index, partial index on active hashes for Bearer auth).
 //
 //go:embed *.sql
 var FS embed.FS

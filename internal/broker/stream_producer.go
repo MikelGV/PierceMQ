@@ -30,6 +30,28 @@ func InitConsumerGroupsAndStreams(ctx context.Context, streamName, groupName str
 
 }
 
+// AddJobRefToStream XADDs a DB-first job ref (see task.Job.ToJobFields).
+// DB-first contract: the PG row is committed before this call; on XADD
+// failure the caller must NOT roll back — the row stays pending and the
+// stale-pending sweeper re-XADDs it.
+func (rds *RedisStore) AddJobRefToStream(ctx context.Context, streamName string, job task.Job) (string, error) {
+	if streamName == "" {
+		return "", fmt.Errorf("stream name cannot be empty")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamName,
+		Values: job.ToJobFields(),
+		ID:     "*",
+	}).Result()
+	if err != nil {
+		return "", fmt.Errorf("xadd job ref to %q failed: %w", streamName, err)
+	}
+	return id, nil
+}
+
 // Here we add a task to a stream
 func (rds *RedisStore) AddTaskToStream(ctx context.Context, streamName string, tasks []*task.TaskRequest) ([]string, error) {
 	pipeline := rds.Conn.Pipeline()
