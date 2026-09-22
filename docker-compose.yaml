@@ -333,6 +333,30 @@ services:
     #      path: .
     #      target: ./
 
+  # --- Scheduler: promotes due scheduled jobs (scheduled_at <= now()) from
+  # PostgreSQL to the Redis streams every SCHED_POLL_SEC. Stateless and
+  # horizontally safe (SKIP LOCKED claiming); restart resumes from DB state.
+  scheduler:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.scheduler
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    environment:
+      REDIS_ADDR: redis://:123456890ca@redis:6379/0
+      DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
+      DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
+      SCHED_POLL_SEC: "10"
+      SCHED_BATCH: "100"
+    restart: always
+    networks:
+      - piercemq
+
   api:
     build:
       context: .

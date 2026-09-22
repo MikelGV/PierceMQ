@@ -31,8 +31,8 @@ type enqueueRequest struct {
 
 // NewEnqueueHandler implements the DB-first dual write: PG insert first,
 // then XADD of the job ref. On XADD failure the PG row stays pending and the
-// stale-pending sweeper (P2) re-XADDs it — never roll back after commit.
-// Future-scheduled jobs skip XADD; the scheduler (P2) dispatches them.
+// stale-pending sweeper re-XADDs it — never roll back after commit.
+// Future-scheduled jobs skip XADD; the scheduler service dispatches them.
 func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

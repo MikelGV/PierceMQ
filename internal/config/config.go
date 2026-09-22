@@ -14,6 +14,10 @@ type Config struct {
 	DB_READ_URL string
 	JWTSecret   string
 	JWTTTLHours int64
+	// SchedPollSeconds is the scheduler poll cadence (§7.5: 10s).
+	SchedPollSeconds int64
+	// SchedBatchSize caps jobs promoted per scheduler tick.
+	SchedBatchSize int64
 }
 
 var Env = initConfig()
@@ -27,6 +31,8 @@ func initConfig() Config {
 		DB_READ_URL: getEnv("DB_READ_URL", "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"),
 		JWTSecret:   getEnv("JWT_SECRET", "dev-only-change-me"),
 		JWTTTLHours: getIntEnv("JWT_TTL_HOURS", 24),
+		SchedPollSeconds: getIntEnv("SCHED_POLL_SEC", 10),
+		SchedBatchSize:   getIntEnv("SCHED_BATCH", 100),
 	}
 }
 
