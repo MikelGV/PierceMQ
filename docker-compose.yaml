@@ -357,6 +357,33 @@ services:
     networks:
       - piercemq
 
+  # --- Reaper: reclaims crashed-worker running jobs past the heartbeat
+  # timeout and re-dispatches stale pending jobs whose XADD never landed
+  # (§12.2-12.3). Own process by design: a crashed worker pool cannot run
+  # its own reaper. Stateless and horizontally safe (SKIP LOCKED).
+  reaper:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.reaper
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    environment:
+      REDIS_ADDR: redis://:123456890ca@redis:6379/0
+      DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
+      DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
+      REAPER_POLL_SEC: "30"
+      REAPER_BATCH: "100"
+      REAPER_STALE_SEC: "90"
+      REAPER_SWEEP_AFTER_SEC: "300"
+    restart: always
+    networks:
+      - piercemq
+
   api:
     build:
       context: .
