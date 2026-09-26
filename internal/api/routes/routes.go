@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -42,15 +43,33 @@ func jwtSecret(cfg *config.Config) string {
 }
 
 func AddRoutes(mux *http.ServeMux, d Deps) {
-	mux.HandleFunc("/healthz", handlers.NewHealthHandler(d.Redis, d.Stores))
+	health := handlers.NewHealthHandler(d.Redis, d.Stores)
+	mux.HandleFunc("/healthz", health)
+	// Canonical §9.7 path; /healthz kept for existing deployments.
+	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/v1/auth/register", handlers.NewRegisterHandler(d.Users))
 	mux.HandleFunc("/v1/auth/login", handlers.NewLoginHandler(d.Users, jwtSecret(d.Config), jwtTTL(d.Config)))
 
 	authed := func(h http.Handler) http.HandlerFunc {
 		return middleware.RequireAuth(d.Users, d.Keys, jwtSecret(d.Config), h).ServeHTTP
 	}
-	mux.HandleFunc("/v1/jobs", authed(handlers.NewEnqueueHandler(d.Jobs, d.Redis)))
-	mux.HandleFunc("/v1/jobs/", authed(handlers.NewJobsHandler(d.Jobs)))
+	enqueue := handlers.NewEnqueueHandler(d.Jobs, d.Redis)
+	list := handlers.NewJobsListHandler(d.Jobs)
+	mux.HandleFunc("/v1/jobs", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			enqueue(w, r)
+		case http.MethodGet:
+			list(w, r)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		}
+	})))
+	mux.HandleFunc("/v1/jobs/", authed(handlers.NewJobsHandler(d.Jobs, d.Redis)))
+	mux.HandleFunc("/v1/stats", authed(handlers.NewStatsHandler(d.Jobs, d.Redis)))
 	mux.HandleFunc("/v1/keys", authed(handlers.NewAPIKeysHandler(d.Keys)))
 	mux.HandleFunc("/v1/keys/revoke", authed(handlers.NewAPIKeyRevokeHandler(d.Keys)))
 }

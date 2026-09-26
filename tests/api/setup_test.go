@@ -70,9 +70,15 @@ func setupAPI(t *testing.T) *apiFixture {
 
 	rds := utils_test.SetUpRedis(t)
 
+	stores := &storage.Stores{
+		Write: &storage.DbStore{Conn: db},
+		Read:  &storage.DbStore{Conn: db},
+	}
+
 	srv := httptest.NewServer(api.NewServer(routes.Deps{
 		Redis:  rds,
 		Config: &config.Config{JWTSecret: "test-secret-do-not-use", JWTTTLHours: 1},
+		Stores: stores,
 		Users:  users.New(db, db),
 		Keys:   auth.New(db, db),
 		Jobs:   jobs.New(db, db),

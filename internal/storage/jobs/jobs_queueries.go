@@ -127,7 +127,10 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 
 func (s *JobsStore) GetJobByID(ctx context.Context, jobID uuid.UUID) (task.Job, error) {
 	var out task.Job
-	if err := scanJobRow(&out, s.read.QueryRowContext(ctx,
+	// Single-job reads go to the WRITE pool (primary): §11.3.1 read-your-writes
+	// demands that GET /jobs/{id} immediately after a write sees it. List,
+	// stats, and events stay on the read pool where seconds of lag are fine.
+	if err := scanJobRow(&out, s.write.QueryRowContext(ctx,
 		`SELECT `+jobColumns+` FROM jobs WHERE job_id = $1`, jobID)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, sql.ErrNoRows

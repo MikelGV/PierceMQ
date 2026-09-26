@@ -112,6 +112,46 @@ func (c *Client) GetJobEvents(ctx context.Context, jobID string) (map[string]any
 	return out, err
 }
 
+// ListJobs lists jobs newest-first, optionally filtered by status
+// (scheduled, pending, queued, running, completed, failed, cancelled).
+// Use limit <= 0 for the server default (50, max 100).
+func (c *Client) ListJobs(ctx context.Context, status string, limit, offset int) (map[string]any, error) {
+	path := "/v1/jobs?"
+	if status != "" {
+		path += "status=" + status + "&"
+	}
+	if limit > 0 {
+		path += fmt.Sprintf("limit=%d&", limit)
+	}
+	if offset > 0 {
+		path += fmt.Sprintf("offset=%d", offset)
+	}
+	var out map[string]any
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+// Cancel cancels a not-yet-running job (DELETE /v1/jobs/{id}).
+func (c *Client) Cancel(ctx context.Context, jobID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, http.MethodDelete, "/v1/jobs/"+jobID, nil, &out)
+	return out, err
+}
+
+// Retry replays a failed job back to pending (POST /v1/jobs/{id}/retry).
+func (c *Client) Retry(ctx context.Context, jobID string) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, http.MethodPost, "/v1/jobs/"+jobID+"/retry", nil, &out)
+	return out, err
+}
+
+// Stats fetches queue and worker statistics (GET /v1/stats).
+func (c *Client) Stats(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(ctx, http.MethodGet, "/v1/stats", nil, &out)
+	return out, err
+}
+
 // CreateAPIKey mints a service key (plaintext returned once).
 func (c *Client) CreateAPIKey(ctx context.Context, name string) (map[string]string, error) {
 	var out map[string]string
