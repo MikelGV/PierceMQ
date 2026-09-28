@@ -44,6 +44,8 @@ func (rds *RedisStore) AddJobRefToStream(ctx context.Context, streamName string,
 	id, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
 		Values: job.ToJobFields(),
+		MaxLen: rds.EffectiveMaxLen(),
+		Approx: true,
 		ID:     "*",
 	}).Result()
 	if err != nil {
@@ -62,6 +64,8 @@ func (rds *RedisStore) AddTaskToStream(ctx context.Context, streamName string, t
 		cmd := pipeline.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: streamName,
 			Values: task.ToFields(),
+			MaxLen: rds.EffectiveMaxLen(),
+			Approx: true,
 			ID:     "*",
 		})
 

@@ -34,7 +34,8 @@ func main() {
 // It must run as its own process, never inside a worker pool — a crashed
 // pool cannot run its own reaper (§12.3).
 func run(ctx context.Context) error {
-	rds, err := broker.Redis_Connect(config.Env.RedisURI)
+	rds, err := broker.ConnectFromConfig(config.Env.RedisURI, config.Env.RedisSentinels, config.Env.RedisMasterName)
+	rds.MaxLen = config.Env.StreamMaxLen
 	if err != nil {
 		return fmt.Errorf("reaper: redis connect: %w", err)
 	}

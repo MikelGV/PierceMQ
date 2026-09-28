@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strconv"
+
+	"github.com/MikelGV/PierceMQ/internal/broker"
 )
 
 type Config struct {
@@ -14,6 +16,16 @@ type Config struct {
 	DB_READ_URL string
 	JWTSecret   string
 	JWTTTLHours int64
+	// RedisSentinels is the optional comma-separated host:port list
+	// (REDIS_SENTINELS) enabling Sentinel failover (§11.3.2). Empty means
+	// single-node mode.
+	RedisSentinels string
+	// RedisMasterName is the Sentinel master name (REDIS_MASTER).
+	RedisMasterName string
+	// StreamMaxLen caps each Redis stream via approximate MAXLEN trimming
+	// (§10.3 retention ≈ throughput × acceptable lag). Zero/negative falls
+	// back to broker.DefaultStreamMaxLen.
+	StreamMaxLen int64
 	// SchedPollSeconds is the scheduler poll cadence (§7.5: 10s).
 	SchedPollSeconds int64
 	// SchedBatchSize caps jobs promoted per scheduler tick.
@@ -41,6 +53,9 @@ func initConfig() Config {
 		DB_READ_URL:             getEnv("DB_READ_URL", "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"),
 		JWTSecret:               getEnv("JWT_SECRET", "dev-only-change-me"),
 		JWTTTLHours:             getIntEnv("JWT_TTL_HOURS", 24),
+		RedisSentinels:          getEnv("REDIS_SENTINELS", ""),
+		RedisMasterName:         getEnv("REDIS_MASTER", broker.DefaultSentinelMaster),
+		StreamMaxLen:            getIntEnv("STREAM_MAX_LEN", broker.DefaultStreamMaxLen),
 		SchedPollSeconds:        getIntEnv("SCHED_POLL_SEC", 10),
 		SchedBatchSize:          getIntEnv("SCHED_BATCH", 100),
 		ReaperPollSeconds:       getIntEnv("REAPER_POLL_SEC", 30),

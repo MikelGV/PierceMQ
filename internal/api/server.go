@@ -55,7 +55,8 @@ func Run(
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	rds, err := broker.Redis_Connect(config.Env.RedisURI)
+	rds, err := broker.ConnectFromConfig(config.Env.RedisURI, config.Env.RedisSentinels, config.Env.RedisMasterName)
+	rds.MaxLen = config.Env.StreamMaxLen
 
 	if err != nil {
 		return fmt.Errorf("Failed to connect to redis: %s\n", err)

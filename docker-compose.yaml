@@ -288,14 +288,96 @@ services:
     restart: always
     ports:
       - "6379:6379"
-    command: redis-server --requirepass 123456890ca
+    # §10.3: noeviction — silent data loss from eviction is worse than
+    # backpressure (writes fail fast when maxmemory is hit instead of
+    # dropping queued jobs). MAXLEN caps per stream are applied by the
+    # producers; this is the backstop.
+    command: redis-server --requirepass 123456890ca --maxmemory 512mb --maxmemory-policy noeviction
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "123456890ca", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - piercemq
+
+  # --- Async replica for Sentinel failover (§11.3.2). Delivery buffer only:
+  # async replication may lose the last ms of stream entries on promotion;
+  # the reaper sweep recovers them from PostgreSQL.
+  redis-replica:
+    image: redis:alpine3.22
+    restart: always
+    command: redis-server --requirepass 123456890ca --masterauth 123456890ca --replicaof redis 6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "123456890ca", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - piercemq
+
+  # --- Redis Sentinel x3 (§11.3.2, §12.2): quorum 2 declares ODOWN and
+  # promotes the replica. Services opt into Sentinel transport with
+  # REDIS_SENTINELS=sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+  # (REDIS_MASTER defaults to mymaster); default stays direct REDIS_ADDR
+  # until the failover path burns in. Ports published for host-side
+  # verification: redis-cli -p 26379 sentinel get-master-addr-by-name mymaster
+  redis-sentinel-1:
+    image: redis:alpine3.22
+    restart: always
+    # The source conf stays :ro; sentinel rewrites its config on state
+    # changes, so boot from a copy in writable /tmp.
+    command: sh -c "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    volumes:
+      - ./docker/sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26379:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    networks:
+      - piercemq
+
+  redis-sentinel-2:
+    image: redis:alpine3.22
+    restart: always
+    # The source conf stays :ro; sentinel rewrites its config on state
+    # changes, so boot from a copy in writable /tmp.
+    command: sh -c "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    volumes:
+      - ./docker/sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26380:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    networks:
+      - piercemq
+
+  redis-sentinel-3:
+    image: redis:alpine3.22
+    restart: always
+    # The source conf stays :ro; sentinel rewrites its config on state
+    # changes, so boot from a copy in writable /tmp.
+    command: sh -c "cp /etc/redis/sentinel.conf /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel"
+    volumes:
+      - ./docker/sentinel/sentinel.conf:/etc/redis/sentinel.conf:ro
+    ports:
+      - "26381:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
     networks:
       - piercemq
   #web:

@@ -30,7 +30,8 @@ func main() {
 // state lives in PostgreSQL, so a restart resumes where the last tick left
 // off and multiple instances may run concurrently (SKIP LOCKED claiming).
 func run(ctx context.Context) error {
-	rds, err := broker.Redis_Connect(config.Env.RedisURI)
+	rds, err := broker.ConnectFromConfig(config.Env.RedisURI, config.Env.RedisSentinels, config.Env.RedisMasterName)
+	rds.MaxLen = config.Env.StreamMaxLen
 	if err != nil {
 		return fmt.Errorf("scheduler: redis connect: %w", err)
 	}

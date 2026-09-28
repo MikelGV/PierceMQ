@@ -285,11 +285,14 @@ func (wo *Worker) runPool(ctx context.Context, w io.Writer, getenv func(string) 
 
 	fmt.Fprintf(w, "pool %s: connecting to redis %s pid=%d\n", poolType, redisAddr, os.Getpid())
 
-	store, err := broker.Redis_Connect(redisAddr)
+	store, err := broker.ConnectFromConfig(redisAddr, getenv("REDIS_SENTINELS"), getenv("REDIS_MASTER"))
 	if err != nil {
 		return fmt.Errorf("pool %s: redis connect failed: %w", poolType, err)
 	}
 	defer store.Conn.Close()
+	if n, err := strconv.ParseInt(getenv("STREAM_MAX_LEN"), 10, 64); err == nil && n > 0 {
+		store.MaxLen = n
+	}
 
 	// PG handle for claim → running → heartbeat → completed/failed.
 	// Fail fast like the API: a pool without a database cannot advance jobs.

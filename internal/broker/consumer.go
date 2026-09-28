@@ -20,7 +20,25 @@ const (
 	claimBatchSize = 35
 	blockTime      = 100 * time.Millisecond
 	maxRetries     = 3
+	// minReadBackoff/maxReadBackoff bound the ServeJobs reconnect backoff:
+	// a dead Redis backs workers off instead of busy-spinning, and recovery
+	// is noticed within seconds (§11.5: workers retry XREADGROUP and
+	// reconnect; the reaper covers orphaned jobs meanwhile).
+	minReadBackoff = 100 * time.Millisecond
+	maxReadBackoff = 5 * time.Second
 )
+
+// NextReadBackoff advances the reconnect backoff: first failure waits
+// minReadBackoff, then doubles per consecutive failure up to maxReadBackoff.
+func NextReadBackoff(current time.Duration) time.Duration {
+	if current < minReadBackoff {
+		return minReadBackoff
+	}
+	if next := current * 2; next < maxReadBackoff {
+		return next
+	}
+	return maxReadBackoff
+}
 
 /**
 * ServeJobs reads messages from a Redis stream and feeds them as jobs to workers via the dispatcher.
@@ -29,6 +47,17 @@ const (
 func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, consumerName string, dispatcher *dispatcher.Dispatcher) error {
 	ticker := time.NewTicker(claimInIdl / 5)
 	defer ticker.Stop()
+
+	backoff := time.Duration(0)
+	waitBackoff := func() bool {
+		backoff = NextReadBackoff(backoff)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(backoff):
+			return true
+		}
+	}
 
 	for {
 
@@ -66,6 +95,7 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 			}).Result()
 
 			if err == redis.Nil || len(res) == 0 {
+				backoff = 0
 				continue
 			}
 
@@ -74,9 +104,12 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 					return err
 				}
 				fmt.Printf("XReadGroup failed: %v \n", err)
-
+				if !waitBackoff() {
+					return ctx.Err()
+				}
 				continue
 			}
+			backoff = 0
 
 			for _, streams := range res {
 				rds.ProcessJobs(ctx, streams.Messages, dispatcher, streamName, groupName, consumerName)
@@ -245,6 +278,8 @@ func (rds *RedisStore) RetryJob(ctx context.Context, msgID, streamName, groupNam
 	newID, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
 		Values: values,
+		MaxLen: rds.EffectiveMaxLen(),
+		Approx: true,
 		ID:     "*",
 	}).Result()
 	if err != nil {
@@ -277,6 +312,8 @@ func (rds *RedisStore) MoveToDeadLetterQueue(ctx context.Context, msgID, streamN
 	if _, err := rds.Conn.XAdd(ctx, &redis.XAddArgs{
 		Stream: dlqName,
 		Values: values,
+		MaxLen: rds.EffectiveMaxLen(),
+		Approx: true,
 		ID:     "*",
 	}).Result(); err != nil {
 		return fmt.Errorf("failed to move message %s to DLQ %s: %w", msgID, dlqName, err)
