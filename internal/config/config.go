@@ -40,6 +40,9 @@ type Config struct {
 	// ReaperSweepAfterSeconds is how old a pending job must be before the
 	// stale-pending sweeper re-dispatches it.
 	ReaperSweepAfterSeconds int64
+	// JobTimeoutSeconds caps handler execution (§3.2: 5 minutes max).
+	// Zero/negative falls back to DefaultJobTimeoutSeconds.
+	JobTimeoutSeconds int64
 }
 
 var Env = initConfig()
@@ -62,6 +65,7 @@ func initConfig() Config {
 		ReaperBatchSize:         getIntEnv("REAPER_BATCH", 100),
 		ReaperStaleSeconds:      getIntEnv("REAPER_STALE_SEC", 90),
 		ReaperSweepAfterSeconds: getIntEnv("REAPER_SWEEP_AFTER_SEC", 300),
+		JobTimeoutSeconds:       getIntEnv("JOB_TIMEOUT_SEC", 300),
 	}
 }
 

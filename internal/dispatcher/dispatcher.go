@@ -27,10 +27,20 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	for {
 		select {
 		case job := <-d.Jobqueue:
-			go func(job *task.Job) {
-				jobCh := <-d.WorkerPool
-				jobCh <- job
-			}(job)
+			// Blocking handoff: no per-job goroutine. When all workers
+			// are busy this blocks, Jobqueue fills (cap 100), and
+			// DispatchTask blocks the ServeJobs poll loop — natural
+			// backpressure instead of unbounded goroutine fan-out.
+			select {
+			case jobCh := <-d.WorkerPool:
+				select {
+				case jobCh <- job:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 		case <-ctx.Done():
 			return
 		}

@@ -78,12 +78,18 @@ func (s *Scheduler) logf(format string, args ...any) {
 // It returns the number successfully dispatched. Claimed jobs whose stream is
 // unknown or whose XADD fails are left pending (never rolled back): the
 // stale-pending sweeper re-dispatches them. Tick itself only fails when the
-// DB claim fails.
+// DB claim fails. Each tick promotes both due scheduled jobs and
+// backoff-matured retries (pending with not_before <= now).
 func (s *Scheduler) Tick(ctx context.Context) (int, error) {
 	due, err := s.jobs.ClaimDueScheduled(ctx, s.now().UTC(), s.batchSize)
 	if err != nil {
 		return 0, fmt.Errorf("scheduler: claim due: %w", err)
 	}
+	retries, err := s.jobs.ClaimDueRetries(ctx, s.now().UTC(), s.batchSize)
+	if err != nil {
+		return 0, fmt.Errorf("scheduler: claim retries: %w", err)
+	}
+	due = append(due, retries...)
 	dispatched := 0
 	for _, job := range due {
 		stream, _, err := queue.StreamFor(job.QueueName, job.Priority)

@@ -29,6 +29,10 @@ func (c *Client) http() *http.Client {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	return c.doWithHeaders(ctx, method, path, body, nil, out)
+}
+
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body any, headers map[string]string, out any) error {
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -42,6 +46,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	req.Header.Set("Content-Type", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
@@ -91,10 +98,20 @@ type EnqueueRequest struct {
 	ScheduledAt    string         `json:"scheduled_at,omitempty"`
 }
 
-// Enqueue performs the DB-first dual write via the API.
+// Enqueue performs the DB-first dual write via the API. The idempotency key
+// is sent both as Idempotency-Key header (§9.1) and body field.
 func (c *Client) Enqueue(ctx context.Context, req EnqueueRequest) (map[string]any, error) {
+	if req.Payload != nil {
+		if b, err := json.Marshal(req.Payload); err == nil && len(b) > 15*1024 {
+			return nil, fmt.Errorf("client: payload exceeds 15KB (%d bytes)", len(b))
+		}
+	}
 	var out map[string]any
-	err := c.do(ctx, http.MethodPost, "/v1/jobs", req, &out)
+	var headers map[string]string
+	if req.IdempotencyKey != "" {
+		headers = map[string]string{"Idempotency-Key": req.IdempotencyKey}
+	}
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/jobs", req, headers, &out)
 	return out, err
 }
 

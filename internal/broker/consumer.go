@@ -16,7 +16,13 @@ import (
 )
 
 const (
-	claimInIdl     = 5 * time.Second
+	// claimInIdle is the XAUTOCLAIM staleness threshold: entries unacked
+	// longer than this are claimed by a sibling consumer. 60s tolerates
+	// slow handlers (timeout 5m) without churn; PG ClaimRunning absorbs the
+	// duplicate (second claimant gets ErrNotClaimable → ack + skip).
+	// Must stay below the reaper's 90s heartbeat window so stream-level
+	// recovery fires first and the reaper backstops PG-only orphans.
+	claimInIdl     = 60 * time.Second
 	claimBatchSize = 35
 	blockTime      = 100 * time.Millisecond
 	maxRetries     = 3
@@ -77,6 +83,9 @@ func (rds *RedisStore) ServeJobs(ctx context.Context, streamName, groupName, con
 
 			if err != nil && err != redis.Nil {
 				fmt.Printf("XAUTOCLAIM failed: %v \n", err)
+				if !waitBackoff() {
+					return ctx.Err()
+				}
 				continue
 			}
 
@@ -135,13 +144,15 @@ func (rds *RedisStore) ProcessJobs(ctx context.Context, messages []redis.XMessag
 			continue
 		}
 
-		job := &task.Job{
-			MsgID:        msg.ID,
-			Type:         taskreq.Type,
-			Payload:      taskreq.Payload,
-			AttemptCount: int16(taskreq.Attempt),
-			MaxRetry:     maxRetries,
-		}
+	job := &task.Job{
+		MsgID:        msg.ID,
+		Stream:       streamName,
+		Group:        groupName,
+		Type:         taskreq.Type,
+		Payload:      taskreq.Payload,
+		AttemptCount: int16(taskreq.Attempt),
+		MaxRetry:     maxRetries,
+	}
 
 		err = d.DispatchTask(ctx, job)
 		if err != nil {
@@ -162,6 +173,8 @@ func (rds *RedisStore) processRef(ctx context.Context, msg redis.XMessage, ref *
 	job := &task.Job{
 		JobID:        ref.JobID,
 		MsgID:        msg.ID,
+		Stream:       streamName,
+		Group:        groupName,
 		Status:       ref.Status,
 		Type:         ref.Type,
 		Payload:      ref.Payload,
@@ -201,7 +214,11 @@ func (rds *RedisStore) processRef(ctx context.Context, msg redis.XMessage, ref *
 	if err := d.DispatchTask(ctx, job); err != nil {
 		fmt.Printf("Failed to dispatch job %s: %v\n", ref.JobID, err)
 		if rds.Jobs != nil && job.ClaimToken.Valid {
-			_, _ = rds.Jobs.FailOrRetry(ctx, job.JobID, job.ClaimToken.UUID, "dispatch failed")
+			if _, ferr := rds.Jobs.FailOrRetry(ctx, job.JobID, job.ClaimToken.UUID, "dispatch failed"); ferr != nil {
+				fmt.Printf("Dispatch-failure FailOrRetry %s failed: %v\n", ref.JobID, ferr)
+			}
+			_, _ = rds.AckJob(ctx, streamName, groupName, msg.ID)
+			return
 		}
 		rds.HandleJobFailure(ctx, msg.ID, streamName, groupName, int(job.AttemptCount))
 	}
@@ -255,6 +272,10 @@ func (rds *RedisStore) GetPendingMessages(ctx context.Context, streamName, group
 	return entries, nil
 }
 
+// HandleJobFailure is the Redis-only retry path (legacy jobs without a PG
+// claim, malformed messages). DB-claimed jobs MUST NOT use this: PG
+// FailOrRetry is the single owner (sets pending + backoff gate) followed by
+// AckJob; immediate stream requeue here would double-enqueue.
 func (rds *RedisStore) HandleJobFailure(ctx context.Context, msgID, streamName, groupName string, attempt int) error {
 	if attempt < maxRetries {
 		return rds.RetryJob(ctx, msgID, streamName, groupName)

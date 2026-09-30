@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 )
 
@@ -12,7 +13,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func decodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }

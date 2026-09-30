@@ -31,9 +31,9 @@ func New(write, read *sql.DB) *JobsStore {
 
 // CreateJob inserts a job + its initial job_events row atomically.
 //
-// Idempotency contract: the UNIQUE is (idempotency_key, created_at), so
-// callers MUST reuse the same CreatedAt on retry for ON CONFLICT to fire.
-// Same key + different CreatedAt lands in another partition and inserts.
+// Idempotency contract: the header/body idempotency key is recorded in the
+// non-partitioned job_idempotency table (global PRIMARY KEY), so the same
+// key conflicts regardless of created_at partition. Empty key = no dedupe.
 // Zero CreatedAt defaults to now (UTC); zero JobID gets a fresh UUID;
 // empty Status defaults to pending.
 func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error) {
@@ -75,8 +75,9 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		max_retry,
 		idempotency_key,
 		scheduled_at,
+		not_before,
 		created_at
-	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	ON CONFLICT (idempotency_key, created_at) WHERE idempotency_key IS NOT NULL DO NOTHING
 	RETURNING job_id, status, created_at, attempt_count, max_retry, priority;`
 
@@ -91,6 +92,7 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		in.MaxRetry,
 		in.IdempotencyKey,
 		in.ScheduledAt,
+		in.NotBefore,
 		in.CreatedAt,
 	).Scan(&out.JobID, &out.Status, &out.CreatedAt, &out.AttemptCount, &out.MaxRetry, &out.Priority)
 	if err != nil {
@@ -98,6 +100,24 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 			return out, ErrJobExists
 		}
 		return out, fmt.Errorf("insert job: %w", err)
+	}
+
+	if in.IdempotencyKey.Valid && in.IdempotencyKey.String != "" {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO job_idempotency (idempotency_key, job_id) VALUES ($1, $2)
+			ON CONFLICT (idempotency_key) DO NOTHING`,
+			in.IdempotencyKey.String, out.JobID); err != nil {
+			return out, fmt.Errorf("insert idempotency: %w", err)
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM job_idempotency WHERE idempotency_key = $1 AND job_id = $2`,
+			in.IdempotencyKey.String, out.JobID).Scan(&n); err != nil {
+			return out, fmt.Errorf("check idempotency: %w", err)
+		}
+		if n == 0 {
+			return out, ErrJobExists
+		}
 	}
 
 	const insertEvent = `INSERT INTO job_events (
@@ -122,6 +142,7 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 	out.QueueName = in.QueueName
 	out.IdempotencyKey = in.IdempotencyKey
 	out.ScheduledAt = in.ScheduledAt
+	out.NotBefore = in.NotBefore
 	return out, nil
 }
 

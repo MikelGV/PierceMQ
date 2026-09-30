@@ -34,6 +34,10 @@ import "embed"
 //   - 000008 creates users (auth MVP: email unique, bcrypt password_hash).
 //   - 000009 creates api_keys (SHA256 key_hash unique, per-user lookup
 //     index, partial index on active hashes for Bearer auth).
+//   - 000010 creates job_idempotency (global dedupe: TEXT PRIMARY KEY,
+//     non-partitioned so cross-month duplicates conflict).
+//   - 000011 adds jobs.not_before (retry backoff gate) + partial index
+//     on (status, not_before) for pending/queued.
 //
 //go:embed *.sql
 var FS embed.FS

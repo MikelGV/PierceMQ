@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -19,6 +20,9 @@ var allowedTypes = map[string]bool{
 	"exec": true, "exec_processing": true,
 }
 
+// MaxPayloadBytes caps job payload size per §3.2 (15 KB).
+const MaxPayloadBytes = 15 * 1024
+
 type enqueueRequest struct {
 	Type           string         `json:"type"`
 	QueueName      string         `json:"queue_name"`
@@ -27,6 +31,69 @@ type enqueueRequest struct {
 	MaxRetry       int16          `json:"max_retry"`
 	IdempotencyKey string         `json:"idempotency_key"`
 	ScheduledAt    string         `json:"scheduled_at"`
+}
+
+// decodeEnqueueRequest tolerantly decodes the body: unknown fields (e.g.
+// retry_policy/backoff from §9.1 clients) are ignored, schedule_at is
+// accepted as an alias of scheduled_at, and retry_policy.max_retries fills
+// max_retry when the flat field is absent.
+func decodeEnqueueRequest(r *http.Request, req *enqueueRequest) error {
+	var raw map[string]json.RawMessage
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&raw); err != nil {
+		return err
+	}
+	get := func(keys ...string) json.RawMessage {
+		for _, k := range keys {
+			if v, ok := raw[k]; ok {
+				return v
+			}
+		}
+		return nil
+	}
+	if v := get("type"); v != nil {
+		if err := json.Unmarshal(v, &req.Type); err != nil {
+			return err
+		}
+	}
+	if v := get("queue_name"); v != nil {
+		if err := json.Unmarshal(v, &req.QueueName); err != nil {
+			return err
+		}
+	}
+	if v := get("payload"); v != nil {
+		if err := json.Unmarshal(v, &req.Payload); err != nil {
+			return err
+		}
+	}
+	if v := get("priority"); v != nil {
+		if err := json.Unmarshal(v, &req.Priority); err != nil {
+			return err
+		}
+	}
+	if v := get("max_retry"); v != nil {
+		if err := json.Unmarshal(v, &req.MaxRetry); err != nil {
+			return err
+		}
+	} else if v := get("retry_policy"); v != nil {
+		var rp struct {
+			MaxRetries *int16 `json:"max_retries"`
+		}
+		if err := json.Unmarshal(v, &rp); err == nil && rp.MaxRetries != nil {
+			req.MaxRetry = *rp.MaxRetries
+		}
+	}
+	if v := get("idempotency_key"); v != nil {
+		if err := json.Unmarshal(v, &req.IdempotencyKey); err != nil {
+			return err
+		}
+	}
+	if v := get("scheduled_at", "schedule_at"); v != nil {
+		if err := json.Unmarshal(v, &req.ScheduledAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NewEnqueueHandler implements the DB-first dual write: PG insert first,
@@ -45,9 +112,13 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 			return
 		}
 		var req enqueueRequest
-		if err := decodeJSON(r, &req); err != nil {
+		if err := decodeEnqueueRequest(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
 			return
+		}
+		// Idempotency-Key header (§9.1) wins; body field is the fallback.
+		if h := strings.TrimSpace(r.Header.Get("Idempotency-Key")); h != "" {
+			req.IdempotencyKey = h
 		}
 		req.Type = strings.TrimSpace(req.Type)
 		req.QueueName = strings.TrimSpace(req.QueueName)
@@ -60,6 +131,10 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 		}
 		if req.Payload == nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload is required"})
+			return
+		}
+		if b, err := json.Marshal(req.Payload); err != nil || len(b) > MaxPayloadBytes {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "payload exceeds 15KB"})
 			return
 		}
 

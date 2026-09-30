@@ -408,17 +408,93 @@ func heartbeatJob(hbCtx context.Context, store *broker.RedisStore, job *task.Job
 	}
 }
 
-// failJob records the PG failure (retry or terminal) and requeues/DLQs
-// the stream message via the existing retry machinery. Legacy jobs
-// (no claim) only get the stream path.
+// failJob records the PG failure (retry with backoff or terminal) and ACKs
+// the original stream message. PG is the single owner for DB-claimed jobs:
+// FailOrRetry sets status=pending + not_before, and the scheduler/reaper
+// re-XADDs when due. No immediate stream retry here (avoids dual-enqueue).
+// Legacy jobs (no claim) only get the stream path.
 func failJob(ctx context.Context, store *broker.RedisStore, logW io.Writer, wkr *Worker, job *task.Job, err error) {
 	if hasClaim(store, job) {
 		if _, ferr := store.Jobs.FailOrRetry(ctx, job.JobID, job.ClaimToken.UUID, err.Error()); ferr != nil {
 			fmt.Fprintf(logW, "pool %s worker %d fail failed %s: %v\n", wkr.PoolID, wkr.ID, job.JobID, ferr)
 		}
+		if job.MsgID != "" {
+			stream, group := ackTarget(job)
+			if stream != "" && group != "" {
+				_, _ = store.AckJob(ctx, stream, group, job.MsgID)
+			}
+		}
+		return
 	}
 	if job.MsgID != "" {
-		_ = store.HandleJobFailure(ctx, job.MsgID, streamForType(job.Type), groupForType(job.Type), int(job.AttemptCount))
+		stream, group := ackTarget(job)
+		if stream != "" && group != "" {
+			_ = store.HandleJobFailure(ctx, job.MsgID, stream, group, int(job.AttemptCount))
+		}
+	}
+}
+
+// ackTarget returns the stream/group the message was consumed from.
+// Falls back to the type-derived high stream for jobs constructed without
+// transport info (tests, legacy paths).
+func ackTarget(job *task.Job) (string, string) {
+	if job != nil && job.Stream != "" && job.Group != "" {
+		return job.Stream, job.Group
+	}
+	if job == nil {
+		return "", ""
+	}
+	return streamForType(job.Type), groupForType(job.Type)
+}
+
+// DefaultJobTimeout caps handler execution per §3.2 (5 minutes max).
+const DefaultJobTimeout = 5 * time.Minute
+
+// jobTimeout reads JOB_TIMEOUT_SEC (seconds), defaulting to 5m on
+// missing/invalid values.
+func jobTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("JOB_TIMEOUT_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return DefaultJobTimeout
+}
+
+// runWithTimeout executes ProcessJobs with a timeout. The handler receives a
+// child ctx cancelled on timeout/exit; a hung handler that ignores ctx still
+// releases the worker slot (its late result is dropped) and the heartbeat
+// has already stopped, so the reaper can reclaim via heartbeat expiry.
+func runWithTimeout(ctx context.Context, timeout time.Duration, wkr *Worker, jobType, payload string) (string, error) {
+	hctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type outcome struct {
+		result string
+		err    error
+	}
+	ch := make(chan outcome, 1)
+	go func() {
+		result, err := wkr.ProcessJobs(jobType, payload, hctx)
+		select {
+		case ch <- outcome{result, err}:
+		case <-hctx.Done():
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-hctx.Done():
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		select {
+		case out := <-ch:
+			return out.result, out.err
+		default:
+			return "", fmt.Errorf("job execution timed out after %s", timeout)
+		}
+	case out := <-ch:
+		return out.result, out.err
 	}
 }
 
@@ -458,20 +534,22 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 					}
 				}
 
-				// Per-job PG heartbeat while the handler runs. Stops when
-				// the handler returns (hbCancel). No-op for legacy jobs.
-				hbCtx, hbCancel := context.WithCancel(ctx)
-				defer hbCancel()
-				if hasClaim(store, job) {
-					go heartbeatJob(hbCtx, store, job)
-				}
+			// Per-job PG heartbeat while the handler runs. Stops when
+			// the handler returns (hbCancel). No-op for legacy jobs.
+			// Heartbeat stops BEFORE fail/complete so a timed-out slot
+			// does not keep refreshing and livelock the reaper.
+			hbCtx, hbCancel := context.WithCancel(ctx)
+			if hasClaim(store, job) {
+				go heartbeatJob(hbCtx, store, job)
+			}
 
-				result, err := wkr.ProcessJobs(job.Type, payloadStr, ctx)
-				if err != nil {
-					fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.MsgID, job.Type, err)
-					failJob(ctx, store, logW, wkr, job, err)
-					return
-				}
+			result, err := runWithTimeout(ctx, jobTimeout(), wkr, job.Type, payloadStr)
+			hbCancel()
+			if err != nil {
+				fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.MsgID, job.Type, err)
+				failJob(ctx, store, logW, wkr, job, err)
+				return
+			}
 				// DB-first, then ack: a crash between leaves a completed
 				// row whose redeliveries the claim status guard absorbs.
 				if hasClaim(store, job) {
@@ -479,15 +557,14 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 						fmt.Fprintf(logW, "pool %s worker %d complete failed %s: %v\n", wkr.PoolID, wkr.ID, job.JobID, err)
 					}
 				}
-				stream := streamForType(job.Type)
-				group := groupForType(job.Type)
-				if stream != "" && group != "" {
-					if _, ackErr := store.AckJob(ctx, stream, group, job.MsgID); ackErr != nil {
-						fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, ackErr)
-					} else {
-						_ = result
-					}
+			stream, group := ackTarget(job)
+			if stream != "" && group != "" {
+				if _, ackErr := store.AckJob(ctx, stream, group, job.MsgID); ackErr != nil {
+					fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, ackErr)
+				} else {
+					_ = result
 				}
+			}
 			}()
 		}
 	}
@@ -515,9 +592,9 @@ func streamForType(jobType string) string {
 	switch jobType {
 	case "email":
 		return queue.EmailHighStream
-	case "file":
+	case "file", "file_processing":
 		return queue.FileHighStream
-	case "exec":
+	case "exec", "exec_processing":
 		return queue.ExecHighStream
 	default:
 		return ""
@@ -528,9 +605,9 @@ func groupForType(jobType string) string {
 	switch jobType {
 	case "email":
 		return queue.EmailGroupHigh
-	case "file":
+	case "file", "file_processing":
 		return queue.FileGroupHigh
-	case "exec":
+	case "exec", "exec_processing":
 		return queue.ExecGroupHigh
 	default:
 		return ""

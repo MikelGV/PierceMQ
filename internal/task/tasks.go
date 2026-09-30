@@ -36,6 +36,8 @@ const (
 type Job struct {
 	JobID          uuid.UUID
 	MsgID          string // Redis stream entry ID, runtime only
+	Stream         string // source stream, runtime only (ACK must target this)
+	Group          string // source consumer group, runtime only (ACK must target this)
 	Status         JobStatus
 	Type           string
 	Payload        any // runtime payload, never written to SQL directly
@@ -48,6 +50,7 @@ type Job struct {
 	ClaimToken     uuid.NullUUID
 	IdempotencyKey sql.NullString
 	ScheduledAt    sql.NullTime
+	NotBefore      sql.NullTime
 	CreatedAt      time.Time
 	StartedAt      sql.NullTime
 	CompletedAt    sql.NullTime

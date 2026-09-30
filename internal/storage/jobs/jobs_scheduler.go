@@ -80,3 +80,64 @@ func (s *JobsStore) ClaimDueScheduled(ctx context.Context, now time.Time, limit 
 	}
 	return out, nil
 }
+
+// ClaimDueRetries promotes backoff-matured retries: pending/queued rows with
+// not_before <= now. It clears the gate (not_before=NULL) so the row is
+// dispatched exactly once per maturation; concurrent schedulers are safe via
+// FOR UPDATE SKIP LOCKED. Returns claimed jobs for stream dispatch.
+func (s *JobsStore) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]task.Job, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT job_id FROM jobs
+		WHERE status IN ('pending', 'queued') AND not_before IS NOT NULL AND not_before <= $1
+		ORDER BY not_before LIMIT $2 FOR UPDATE SKIP LOCKED`, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("select due retries: %w", err)
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan due retry id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("rows due retries: %w", err)
+	}
+	rows.Close()
+
+	out := make([]task.Job, 0, len(ids))
+	for _, id := range ids {
+		var job task.Job
+		if err := scanJobRow(&job, tx.QueryRowContext(ctx,
+			`UPDATE jobs SET not_before = NULL WHERE job_id = $1 AND status IN ('pending', 'queued')
+			RETURNING `+jobColumns, id)); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("gate retry job %s: %w", id, err)
+		}
+		hydratePayload(&job)
+		out = append(out, job)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return out, nil
+}

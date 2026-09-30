@@ -76,7 +76,7 @@ func TestCreateJob(t *testing.T) {
 		require.Equal(t, 1, countEvents(t, db, first.JobID.String()))
 	})
 
-	t.Run("same key plus different created_at inserts", func(t *testing.T) {
+	t.Run("same key plus different created_at conflicts (global dedupe)", func(t *testing.T) {
 		store, _ := setupJobsStore(t)
 
 		_, err := store.CreateJob(ctx, baseJob("k-scope-1", sept2026()))
@@ -84,7 +84,7 @@ func TestCreateJob(t *testing.T) {
 
 		other := baseJob("k-scope-1", sept2026().Add(2*time.Hour))
 		_, err = store.CreateJob(ctx, other)
-		require.NoError(t, err, "different partition means no conflict by design")
+		require.ErrorIs(t, err, jobs.ErrJobExists, "job_idempotency is global across partitions")
 	})
 
 	t.Run("null key always inserts", func(t *testing.T) {

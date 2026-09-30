@@ -39,6 +39,7 @@ func scanJobRow(job *task.Job, row interface {
 		&job.ClaimToken,
 		&job.IdempotencyKey,
 		&job.ScheduledAt,
+		&job.NotBefore,
 		&job.CreatedAt,
 		&job.StartedAt,
 		&job.CompletedAt,
@@ -49,7 +50,7 @@ func scanJobRow(job *task.Job, row interface {
 
 const jobColumns = `job_id, status, type, payload_ref, queue_name, priority,
 	attempt_count, max_retry, worker_id, claim_token, idempotency_key,
-	scheduled_at, created_at, started_at, completed_at, heartbeat_at, last_error`
+	scheduled_at, not_before, created_at, started_at, completed_at, heartbeat_at, last_error`
 
 // hydratePayload best-effort decodes payload_ref JSON into Payload so the
 // worker handler receives a usable value without a second query.
@@ -103,11 +104,15 @@ func (s *JobsStore) ClaimRunning(ctx context.Context, jobID uuid.UUID, workerID 
 	if !claimable(job.Status) {
 		return out, uuid.Nil, ErrNotClaimable
 	}
+	if job.NotBefore.Valid && job.NotBefore.Time.After(time.Now().UTC()) {
+		return out, uuid.Nil, ErrNotClaimable
+	}
 	old := job.Status
 
 	if err := scanJobRow(&out, tx.QueryRowContext(ctx,
 		`UPDATE jobs SET status = 'running', worker_id = $2, claim_token = $3,
 			started_at = COALESCE(started_at, now()), heartbeat_at = now(),
+			not_before = NULL,
 			attempt_count = attempt_count + 1
 		WHERE job_id = $1 RETURNING `+jobColumns, jobID, workerID, token)); err != nil {
 		return out, uuid.Nil, fmt.Errorf("claim job: %w", err)
@@ -184,8 +189,10 @@ func (s *JobsStore) Complete(ctx context.Context, jobID, claimToken uuid.UUID) e
 }
 
 // FailOrRetry records a failed attempt. Below max_retry the job returns to
-// pending (claim cleared, worker kept for audit); exhausted jobs move to
-// failed with last_error. Returns the updated job.
+// pending with an exponential backoff gate (not_before): 10s * 2^attempt
+// capped at 5m. The scheduler promotes due retries; the reaper sweep skips
+// jobs whose not_before is in the future. Exhausted jobs move to failed
+// with last_error. Returns the updated job.
 func (s *JobsStore) FailOrRetry(ctx context.Context, jobID, claimToken uuid.UUID, lastErr string) (task.Job, error) {
 	var out task.Job
 
@@ -212,14 +219,19 @@ func (s *JobsStore) FailOrRetry(ctx context.Context, jobID, claimToken uuid.UUID
 		next = task.JobFailed
 	}
 
-	query := `UPDATE jobs SET status = $2, claim_token = NULL, last_error = $3`
+	query := `UPDATE jobs SET status = $2, claim_token = NULL, last_error = $3, not_before = $4`
 	if next == task.JobFailed {
 		query += `, completed_at = now()`
 	}
 	query += ` WHERE job_id = $1 RETURNING ` + jobColumns
 
+	var notBefore sql.NullTime
+	if next == task.JobPending {
+		notBefore = sql.NullTime{Time: time.Now().UTC().Add(RetryBackoff(job.AttemptCount)), Valid: true}
+	}
+
 	if err := scanJobRow(&out, tx.QueryRowContext(ctx, query,
-		jobID, string(next), sql.NullString{String: lastErr, Valid: lastErr != ""})); err != nil {
+		jobID, string(next), sql.NullString{String: lastErr, Valid: lastErr != ""}, notBefore)); err != nil {
 		return out, fmt.Errorf("fail job: %w", err)
 	}
 	if err := insertEvent(ctx, tx, jobID, task.JobRunning, next); err != nil {
@@ -233,6 +245,26 @@ func (s *JobsStore) FailOrRetry(ctx context.Context, jobID, claimToken uuid.UUID
 	return out, nil
 }
 
+// RetryBackoff returns the delay before a failed job becomes claimable:
+// 10s * 2^attempt capped at 5m (attempt is the completed attempt count).
+func RetryBackoff(attempt int16) time.Duration {
+	d := 10 * time.Second << minAttemptShift(attempt)
+	if d > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+func minAttemptShift(attempt int16) uint {
+	if attempt < 0 {
+		return 0
+	}
+	if attempt > 5 {
+		return 5
+	}
+	return uint(attempt)
+}
+
 // ListStalePending returns jobs stuck in pending/queued older than the
 // cutoff (orphans of a DB-insert/XADD dual-write where the XADD failed).
 // Read-only on the read pool; the future enqueue path (or a sweeper in
@@ -242,6 +274,7 @@ func (s *JobsStore) ListStalePending(ctx context.Context, olderThan time.Time, l
 	rows, err := s.read.QueryContext(ctx,
 		`SELECT `+jobColumns+` FROM jobs
 		WHERE status IN ('pending', 'queued') AND created_at < $1
+			AND (not_before IS NULL OR not_before <= now())
 		ORDER BY created_at LIMIT $2`, olderThan, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list stale pending: %w", err)

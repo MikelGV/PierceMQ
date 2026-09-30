@@ -130,8 +130,17 @@ func TestFailOrRetry(t *testing.T) {
 		require.Equal(t, task.JobPending, out.Status)
 		require.Equal(t, "boom", out.LastError.String)
 		require.Equal(t, 3, countEvents(t, db, created.JobID.String()))
+		require.True(t, out.NotBefore.Valid, "backoff gate must be set")
+		require.True(t, out.NotBefore.Time.After(time.Now().UTC().Add(-time.Minute)))
 
-		// Back to pending means it can be claimed again.
+		// Backoff gate means it cannot be claimed until due.
+		_, _, err = store.ClaimRunning(ctx, created.JobID, "worker-2")
+		require.ErrorIs(t, err, jobs.ErrNotClaimable)
+
+		// Once the scheduler matures the gate, it becomes claimable again.
+		due, err := store.ClaimDueRetries(ctx, time.Now().UTC().Add(time.Hour), 10)
+		require.NoError(t, err)
+		require.Len(t, due, 1)
 		_, _, err = store.ClaimRunning(ctx, created.JobID, "worker-2")
 		require.NoError(t, err)
 	})

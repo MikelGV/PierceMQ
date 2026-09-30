@@ -48,7 +48,7 @@ func (s *JobsStore) RetryJob(ctx context.Context, jobID uuid.UUID) (task.Job, er
 	if err := scanJobRow(&out, tx.QueryRowContext(ctx,
 		`UPDATE jobs SET status = 'pending', attempt_count = 0,
 			claim_token = NULL, worker_id = NULL, last_error = NULL,
-			completed_at = NULL
+			not_before = NULL, completed_at = NULL
 		WHERE job_id = $1 RETURNING `+jobColumns, jobID)); err != nil {
 		return out, fmt.Errorf("retry job: %w", err)
 	}
