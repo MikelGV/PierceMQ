@@ -53,5 +53,35 @@ func run(ctx context.Context) error {
 
 	fmt.Fprintf(os.Stdout, "scheduler: polling every %s, batch %d\n",
 		poll, config.Env.SchedBatchSize)
+
+	retentionPoll := time.Duration(config.Env.RetentionPollSeconds) * time.Second
+	if retentionPoll <= 0 {
+		retentionPoll = scheduler.DefaultRetentionPoll
+	}
+	retentionBatch := int(config.Env.RetentionBatchSize)
+	if retentionBatch <= 0 {
+		retentionBatch = scheduler.DefaultRetentionBatch
+	}
+	store := jobs.New(stores.Write.Conn, stores.Read.Conn)
+	go func() {
+		t := time.NewTicker(retentionPoll)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				n, err := scheduler.Maintain(ctx, store, time.Now().UTC(), config.Env.RetentionDays, retentionBatch)
+				if err != nil {
+					fmt.Fprintf(os.Stdout, "scheduler: retention cycle failed: %v\n", err)
+					continue
+				}
+				if n > 0 {
+					fmt.Fprintf(os.Stdout, "scheduler: retention purged %d jobs\n", n)
+				}
+			}
+		}
+	}()
+
 	return s.Run(ctx)
 }

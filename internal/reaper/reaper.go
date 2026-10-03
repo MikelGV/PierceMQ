@@ -7,11 +7,13 @@
 //     reset to pending (claim cleared) and XADDed back to their stream for a
 //     healthy worker to claim.
 //  2. Stale pending sweep — jobs stuck in pending/queued older than
-//     SweepAfter (default 5m), i.e. orphans of a DB-insert/XADD dual write
-//     where the XADD failed, are re-XADDed. The cutoff keeps healthy-path
-//     churn at zero (live jobs are claimed in seconds); duplicates under a
-//     sustained backlog are absorbed by the ClaimRunning status guard
-//     (redeliveries ack + skip) and bounded by stream MAXLEN (Phase 4).
+//     SweepAfter (default 60s), i.e. orphans of a DB-insert/XADD dual write
+//     where the XADD failed, are re-XADDed. Backoff-gated retries
+//     (not_before in the future) are skipped by the query. The cutoff keeps
+//     healthy-path churn at zero (live jobs are claimed in seconds;
+//     backoff-matured retries are promoted by the scheduler every 10s);
+//     duplicates under a sustained backlog are absorbed by the ClaimRunning
+//     status guard (redeliveries ack + skip) and bounded by stream MAXLEN.
 //
 // The reaper runs as its own process (cmd/reaper), never inside a worker
 // pool — a crashed pool cannot run its own reaper. It is stateless and
@@ -38,8 +40,11 @@ const (
 	// DefaultStaleAfter is the heartbeat timeout from §12.2.
 	DefaultStaleAfter = 90 * time.Second
 	// DefaultSweepAfter is how old a pending job must be before the sweeper
-	// re-dispatches it.
-	DefaultSweepAfter = 5 * time.Minute
+	// re-dispatches it. 60s keeps worst-case Redis-failover orphan recovery
+	// at ~stale 90s + poll 30s for running plus ~60s + poll 30s for pending
+	// orphans; the scheduler's 10s promotion covers backoff-matured retries
+	// sooner.
+	DefaultSweepAfter = 60 * time.Second
 )
 
 // StreamPusher dispatches a job to its stream.

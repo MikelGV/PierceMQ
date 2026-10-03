@@ -189,7 +189,7 @@ func TestStatsEndpoint(t *testing.T) {
 
 	code, body := callAPI(t, c, http.MethodGet, "/v1/stats")
 	require.Equal(t, http.StatusOK, code, "%v", body)
-	for _, key := range []string{"pending", "processing", "completed", "failed", "scheduled", "total_workers", "queue_depth"} {
+	for _, key := range []string{"pending", "queued", "processing", "completed", "failed", "scheduled", "cancelled", "pending_oldest_age_sec", "total_workers", "queue_depth"} {
 		require.Contains(t, body, key, "stats must carry %s: %v", key, body)
 	}
 	require.Equal(t, float64(2), body["pending"])
@@ -224,7 +224,7 @@ func TestClientOpsParity(t *testing.T) {
 
 	stats, err := c.Stats(ctx)
 	require.NoError(t, err)
-	for _, key := range []string{"pending", "processing", "completed", "failed", "scheduled", "total_workers", "queue_depth"} {
+	for _, key := range []string{"pending", "queued", "processing", "completed", "failed", "scheduled", "cancelled", "pending_oldest_age_sec", "total_workers", "queue_depth"} {
 		require.Contains(t, stats, key)
 	}
 }

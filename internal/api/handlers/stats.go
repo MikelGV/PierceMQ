@@ -40,15 +40,23 @@ func NewStatsHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handler
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stats failed"})
 			return
 		}
+		pendingAge, err := store.OldestPendingAgeSec(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stats failed"})
+			return
+		}
 		workers, depth := redisSignals(r.Context(), rds)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"pending":       counts.Pending + counts.Queued,
-			"processing":    counts.Running,
-			"completed":     counts.Completed,
-			"failed":        counts.Failed,
-			"scheduled":     counts.Scheduled,
-			"total_workers": workers,
-			"queue_depth":   depth,
+			"pending":               counts.Pending + counts.Queued,
+			"queued":                counts.Queued,
+			"processing":            counts.Running,
+			"completed":             counts.Completed,
+			"failed":                counts.Failed,
+			"scheduled":             counts.Scheduled,
+			"cancelled":             counts.Cancelled,
+			"pending_oldest_age_sec": pendingAge,
+			"total_workers":         workers,
+			"queue_depth":           depth,
 		})
 	}
 }

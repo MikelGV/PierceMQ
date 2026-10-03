@@ -38,6 +38,8 @@ import "embed"
 //     non-partitioned so cross-month duplicates conflict).
 //   - 000011 adds jobs.not_before (retry backoff gate) + partial index
 //     on (status, not_before) for pending/queued.
+//   - 000012 pre-creates jobs/job_events monthlies Dec 2026-Jun 2027;
+//     the scheduler retention cycle ensures further months at runtime.
 //
 //go:embed *.sql
 var FS embed.FS

@@ -45,9 +45,12 @@ func NewJobsListHandler(store *jobs.JobsStore) http.HandlerFunc {
 		limit := 50
 		if raw := q.Get("limit"); raw != "" {
 			n, err := strconv.Atoi(raw)
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be an integer"})
+			if err != nil || n <= 0 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
 				return
+			}
+			if n > 100 {
+				n = 100
 			}
 			limit = n
 		}

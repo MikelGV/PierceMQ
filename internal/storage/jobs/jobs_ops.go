@@ -158,6 +158,23 @@ type Stats struct {
 	Cancelled int64
 }
 
+// OldestPendingAgeSec returns the age in seconds of the oldest
+// pending/queued job (0 when none). Serves GET /v1/stats
+// pending_oldest_age_sec: a growing value with no corresponding decrease
+// signals scheduler/reaper stall (§12.2). Read pool.
+func (s *JobsStore) OldestPendingAgeSec(ctx context.Context) (int64, error) {
+	var age sql.NullInt64
+	if err := s.read.QueryRowContext(ctx,
+		`SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at)))::BIGINT
+		FROM jobs WHERE status IN ('pending', 'queued')`).Scan(&age); err != nil {
+		return 0, fmt.Errorf("oldest pending age: %w", err)
+	}
+	if !age.Valid {
+		return 0, nil
+	}
+	return age.Int64, nil
+}
+
 // JobStats counts jobs per status in one pass. Runs at repeatable read (§10.4
 // snapshot consistency) on the read pool: reporting sees a stable snapshot,
 // staleness of seconds is accepted.

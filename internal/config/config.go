@@ -43,6 +43,13 @@ type Config struct {
 	// JobTimeoutSeconds caps handler execution (§3.2: 5 minutes max).
 	// Zero/negative falls back to DefaultJobTimeoutSeconds.
 	JobTimeoutSeconds int64
+	// RetentionDays bounds terminal-job retention (§10.4: 4 days).
+	// Zero/negative disables the purger.
+	RetentionDays int64
+	// RetentionPollSeconds is the purger cadence. Non-positive gets default.
+	RetentionPollSeconds int64
+	// RetentionBatchSize caps rows purged per cycle.
+	RetentionBatchSize int64
 }
 
 var Env = initConfig()
@@ -64,8 +71,11 @@ func initConfig() Config {
 		ReaperPollSeconds:       getIntEnv("REAPER_POLL_SEC", 30),
 		ReaperBatchSize:         getIntEnv("REAPER_BATCH", 100),
 		ReaperStaleSeconds:      getIntEnv("REAPER_STALE_SEC", 90),
-		ReaperSweepAfterSeconds: getIntEnv("REAPER_SWEEP_AFTER_SEC", 300),
+		ReaperSweepAfterSeconds: getIntEnv("REAPER_SWEEP_AFTER_SEC", 60),
 		JobTimeoutSeconds:       getIntEnv("JOB_TIMEOUT_SEC", 300),
+		RetentionDays:           getIntEnv("RETENTION_DAYS", 4),
+		RetentionPollSeconds:    getIntEnv("RETENTION_POLL_SEC", 3600),
+		RetentionBatchSize:      getIntEnv("RETENTION_BATCH", 1000),
 	}
 }
 

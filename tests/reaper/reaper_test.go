@@ -51,8 +51,8 @@ func setupReaper(t *testing.T) (*reaper.Reaper, *jobs.JobsStore, *broker.RedisSt
 
 	rds := utils_test.SetUpRedis(t)
 	store := jobs.New(db, db)
-	// poll 1s (unused by Tick), batch 10, stale-after 90s, sweep pending older than 5m.
-	r := reaper.New(store, rds, time.Second, 10, 90*time.Second, 5*time.Minute)
+	// poll 1s (unused by Tick), batch 10, stale-after 90s, sweep pending older than 60s.
+	r := reaper.New(store, rds, time.Second, 10, 90*time.Second, time.Minute)
 	return r, store, rds, db
 }
 
@@ -78,7 +78,7 @@ func streamLen(t *testing.T, rds *broker.RedisStore, stream string) int {
 func TestTick(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
-	// Inside the Sep 2026 partition, older than the 5m sweep cutoff.
+	// Inside the Sep 2026 partition, older than the 60s sweep cutoff.
 	old := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 
 	t.Run("reclaims crashed worker jobs to pending and re-enqueues them", func(t *testing.T) {
