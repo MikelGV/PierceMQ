@@ -13,6 +13,7 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/queue"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
+	"github.com/google/uuid"
 )
 
 var allowedTypes = map[string]bool{
@@ -111,6 +112,7 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
 		}
+		userID, _ := auth.UserIDFromContext(r.Context())
 		var req enqueueRequest
 		if err := decodeEnqueueRequest(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
@@ -146,6 +148,7 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 			MaxRetry:  req.MaxRetry,
 			Status:    task.JobPending,
 		}
+		in.OwnerUserID = uuid.NullUUID{UUID: userID, Valid: true}
 		if req.IdempotencyKey != "" {
 			in.IdempotencyKey = sql.NullString{String: req.IdempotencyKey, Valid: true}
 		}

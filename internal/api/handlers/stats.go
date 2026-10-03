@@ -35,12 +35,13 @@ func NewStatsHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handler
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
 		}
-		counts, err := store.JobStats(r.Context())
+		userID, _ := auth.UserIDFromContext(r.Context())
+		counts, err := store.JobStats(r.Context(), userID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stats failed"})
 			return
 		}
-		pendingAge, err := store.OldestPendingAgeSec(r.Context())
+		pendingAge, err := store.OldestPendingAgeSec(r.Context(), userID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stats failed"})
 			return

@@ -7,7 +7,14 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/auth"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
+	"github.com/google/uuid"
 )
+
+// mustUserID returns the authenticated caller (checked by the caller).
+func mustUserID(r *http.Request) uuid.UUID {
+	id, _ := auth.UserIDFromContext(r.Context())
+	return id
+}
 
 // validListStatuses is the §9 filter vocabulary: every job_status value, plus
 // "" for unfiltered.
@@ -64,7 +71,7 @@ func NewJobsListHandler(store *jobs.JobsStore) http.HandlerFunc {
 			offset = n
 		}
 
-		list, err := store.ListJobs(r.Context(), task.JobStatus(status), limit, offset)
+		list, err := store.ListJobs(r.Context(), task.JobStatus(status), limit, offset, mustUserID(r))
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list jobs failed"})
 			return

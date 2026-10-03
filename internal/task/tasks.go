@@ -49,6 +49,7 @@ type Job struct {
 	WorkerID       sql.NullString
 	ClaimToken     uuid.NullUUID
 	IdempotencyKey sql.NullString
+	OwnerUserID    uuid.NullUUID
 	ScheduledAt    sql.NullTime
 	NotBefore      sql.NullTime
 	CreatedAt      time.Time

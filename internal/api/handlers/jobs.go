@@ -101,7 +101,8 @@ func allowedFor(sub string) string {
 }
 
 func getSingle(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jobID uuid.UUID) {
-	job, err := store.GetJobByID(r.Context(), jobID)
+	userID, _ := auth.UserIDFromContext(r.Context())
+	job, err := store.GetJobByID(r.Context(), jobID, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
@@ -114,6 +115,16 @@ func getSingle(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 }
 
 func getEvents(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jobID uuid.UUID) {
+	userID, _ := auth.UserIDFromContext(r.Context())
+	// Ownership gate: events have no owner column, so the parent job guards them.
+	if _, err := store.GetJobByID(r.Context(), jobID, userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get job failed"})
+		return
+	}
 	events, err := store.GetJobEvents(r.Context(), jobID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list events failed"})
@@ -143,7 +154,8 @@ func getEvents(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 // may cancel; anything else is a 409. The orphaned stream entry (if any) is
 // left for the claim guard to ack + skip.
 func cancelJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jobID uuid.UUID) {
-	if _, err := store.GetJobByID(r.Context(), jobID); err != nil {
+	userID, _ := auth.UserIDFromContext(r.Context())
+	if _, err := store.GetJobByID(r.Context(), jobID, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
 			return
@@ -169,7 +181,8 @@ func cancelJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 // to pending and is re-dispatched to its stream. On dispatch failure the row
 // stays pending (202 + warning) for the reaper sweep — never rolled back.
 func retryJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, rds *broker.RedisStore, jobID uuid.UUID) {
-	if _, err := store.GetJobByID(r.Context(), jobID); err != nil {
+	userID, _ := auth.UserIDFromContext(r.Context())
+	if _, err := store.GetJobByID(r.Context(), jobID, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
 			return

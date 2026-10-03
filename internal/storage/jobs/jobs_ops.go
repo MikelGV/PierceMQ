@@ -10,6 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
+// nullableOwner maps the optional owner scoping arg to a nullable query param:
+// no owner (system-wide internal reads) binds NULL which disables the filter.
+func nullableOwner(owner []uuid.UUID) any {
+	if len(owner) > 0 && owner[0] != uuid.Nil {
+		return owner[0]
+	}
+	return nil
+}
+
 // ErrNotRetryable is returned when a job cannot be retried: it is not in
 // failed status, or the row is missing. Detect via errors.Is.
 var ErrNotRetryable = errors.New("jobs: not retryable")
@@ -112,7 +121,11 @@ func (s *JobsStore) CancelJob(ctx context.Context, jobID uuid.UUID) (task.Job, e
 // (§9.4-9.5). Empty status lists all. Limit is clamped to 1..100; offset must
 // be >= 0. Served from the read pool: a few seconds of lag is accepted for
 // observability reads (§11.3.1).
-func (s *JobsStore) ListJobs(ctx context.Context, status task.JobStatus, limit, offset int) ([]task.Job, error) {
+//
+// Optional owner scoping (tenant isolation): when a caller user_id is passed,
+// only that user's rows are listed; legacy NULL-owner rows are excluded.
+// Internal callers omit owner for system-wide reads.
+func (s *JobsStore) ListJobs(ctx context.Context, status task.JobStatus, limit, offset int, owner ...uuid.UUID) ([]task.Job, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -126,7 +139,8 @@ func (s *JobsStore) ListJobs(ctx context.Context, status task.JobStatus, limit, 
 	rows, err := s.read.QueryContext(ctx,
 		`SELECT `+jobColumns+` FROM jobs
 		WHERE ($1 = '' OR status = $1::job_status)
-		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, string(status), limit, offset)
+			AND ($4::UUID IS NULL OR owner_user_id = $4)
+		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, string(status), limit, offset, nullableOwner(owner))
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -161,12 +175,14 @@ type Stats struct {
 // OldestPendingAgeSec returns the age in seconds of the oldest
 // pending/queued job (0 when none). Serves GET /v1/stats
 // pending_oldest_age_sec: a growing value with no corresponding decrease
-// signals scheduler/reaper stall (§12.2). Read pool.
-func (s *JobsStore) OldestPendingAgeSec(ctx context.Context) (int64, error) {
+// signals scheduler/reaper stall (§12.2). Read pool. Optional owner scopes
+// to the caller's jobs.
+func (s *JobsStore) OldestPendingAgeSec(ctx context.Context, owner ...uuid.UUID) (int64, error) {
 	var age sql.NullInt64
 	if err := s.read.QueryRowContext(ctx,
 		`SELECT EXTRACT(EPOCH FROM (now() - MIN(created_at)))::BIGINT
-		FROM jobs WHERE status IN ('pending', 'queued')`).Scan(&age); err != nil {
+		FROM jobs WHERE status IN ('pending', 'queued')
+			AND ($1::UUID IS NULL OR owner_user_id = $1)`, nullableOwner(owner)).Scan(&age); err != nil {
 		return 0, fmt.Errorf("oldest pending age: %w", err)
 	}
 	if !age.Valid {
@@ -177,8 +193,8 @@ func (s *JobsStore) OldestPendingAgeSec(ctx context.Context) (int64, error) {
 
 // JobStats counts jobs per status in one pass. Runs at repeatable read (§10.4
 // snapshot consistency) on the read pool: reporting sees a stable snapshot,
-// staleness of seconds is accepted.
-func (s *JobsStore) JobStats(ctx context.Context) (Stats, error) {
+// staleness of seconds is accepted. Optional owner scopes to the caller's jobs.
+func (s *JobsStore) JobStats(ctx context.Context, owner ...uuid.UUID) (Stats, error) {
 	var stats Stats
 
 	tx, err := s.read.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
@@ -188,7 +204,9 @@ func (s *JobsStore) JobStats(ctx context.Context) (Stats, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx,
-		`SELECT status, count(*) FROM jobs GROUP BY status`)
+		`SELECT status, count(*) FROM jobs
+		WHERE ($1::UUID IS NULL OR owner_user_id = $1)
+		GROUP BY status`, nullableOwner(owner))
 	if err != nil {
 		return stats, fmt.Errorf("count jobs: %w", err)
 	}

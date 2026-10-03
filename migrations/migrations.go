@@ -40,6 +40,8 @@ import "embed"
 //     on (status, not_before) for pending/queued.
 //   - 000012 pre-creates jobs/job_events monthlies Dec 2026-Jun 2027;
 //     the scheduler retention cycle ensures further months at runtime.
+//   - 000013 adds jobs.owner_user_id (tenant isolation: NULL for legacy
+//     rows, always set for API-created jobs; API reads filter by caller).
 //
 //go:embed *.sql
 var FS embed.FS

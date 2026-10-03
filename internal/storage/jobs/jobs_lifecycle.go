@@ -38,6 +38,7 @@ func scanJobRow(job *task.Job, row interface {
 		&job.WorkerID,
 		&job.ClaimToken,
 		&job.IdempotencyKey,
+		&job.OwnerUserID,
 		&job.ScheduledAt,
 		&job.NotBefore,
 		&job.CreatedAt,
@@ -50,6 +51,7 @@ func scanJobRow(job *task.Job, row interface {
 
 const jobColumns = `job_id, status, type, payload_ref, queue_name, priority,
 	attempt_count, max_retry, worker_id, claim_token, idempotency_key,
+	owner_user_id,
 	scheduled_at, not_before, created_at, started_at, completed_at, heartbeat_at, last_error`
 
 // hydratePayload best-effort decodes payload_ref JSON into Payload so the

@@ -74,10 +74,11 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		attempt_count,
 		max_retry,
 		idempotency_key,
+		owner_user_id,
 		scheduled_at,
 		not_before,
 		created_at
-	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	ON CONFLICT (idempotency_key, created_at) WHERE idempotency_key IS NOT NULL DO NOTHING
 	RETURNING job_id, status, created_at, attempt_count, max_retry, priority;`
 
@@ -91,6 +92,7 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		in.AttemptCount,
 		in.MaxRetry,
 		in.IdempotencyKey,
+		in.OwnerUserID,
 		in.ScheduledAt,
 		in.NotBefore,
 		in.CreatedAt,
@@ -141,18 +143,30 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 	out.Payload = in.Payload
 	out.QueueName = in.QueueName
 	out.IdempotencyKey = in.IdempotencyKey
+	out.OwnerUserID = in.OwnerUserID
 	out.ScheduledAt = in.ScheduledAt
 	out.NotBefore = in.NotBefore
 	return out, nil
 }
 
-func (s *JobsStore) GetJobByID(ctx context.Context, jobID uuid.UUID) (task.Job, error) {
+func (s *JobsStore) GetJobByID(ctx context.Context, jobID uuid.UUID, owner ...uuid.UUID) (task.Job, error) {
 	var out task.Job
 	// Single-job reads go to the WRITE pool (primary): §11.3.1 read-your-writes
 	// demands that GET /jobs/{id} immediately after a write sees it. List,
 	// stats, and events stay on the read pool where seconds of lag are fine.
-	if err := scanJobRow(&out, s.write.QueryRowContext(ctx,
-		`SELECT `+jobColumns+` FROM jobs WHERE job_id = $1`, jobID)); err != nil {
+	//
+	// Optional owner scoping (tenant isolation): when a caller user_id is
+	// passed, rows owned by another user — or legacy rows with NULL owner —
+	// read as not-found so API handlers return 404 without user enumeration.
+	// Internal paths (worker/scheduler/reaper/tests) omit owner and keep
+	// system-wide access.
+	query := `SELECT ` + jobColumns + ` FROM jobs WHERE job_id = $1`
+	args := []any{jobID}
+	if len(owner) > 0 && owner[0] != uuid.Nil {
+		query += ` AND owner_user_id = $2`
+		args = append(args, owner[0])
+	}
+	if err := scanJobRow(&out, s.write.QueryRowContext(ctx, query, args...)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, sql.ErrNoRows
 		}
