@@ -7,8 +7,7 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/broker"
 )
 
-type Config struct {
-	Port        string
+type Config struct {	Port        string
 	Host        string
 	RedisURI    string
 	PSQLURI     string
@@ -50,9 +49,21 @@ type Config struct {
 	RetentionPollSeconds int64
 	// RetentionBatchSize caps rows purged per cycle.
 	RetentionBatchSize int64
+	// RateLimitRPS is the per-caller sustained request rate (§7.6, §12.5).
+	// Zero/negative falls back to DefaultRateLimitRPS.
+	RateLimitRPS int64
+	// RateLimitBurst is the per-caller token bucket size. Zero/negative
+	// falls back to DefaultRateLimitBurst.
+	RateLimitBurst int64
 }
 
 var Env = initConfig()
+
+// Default per-caller rate limits (§7.6, §12.5): 20 rps sustained, 40 burst.
+const (
+	DefaultRateLimitRPS   = 20
+	DefaultRateLimitBurst = 40
+)
 
 func initConfig() Config {
 	return Config{
@@ -76,6 +87,8 @@ func initConfig() Config {
 		RetentionDays:           getIntEnv("RETENTION_DAYS", 4),
 		RetentionPollSeconds:    getIntEnv("RETENTION_POLL_SEC", 3600),
 		RetentionBatchSize:      getIntEnv("RETENTION_BATCH", 1000),
+		RateLimitRPS:            getIntEnv("RATE_LIMIT_RPS", DefaultRateLimitRPS),
+		RateLimitBurst:          getIntEnv("RATE_LIMIT_BURST", DefaultRateLimitBurst),
 	}
 }
 

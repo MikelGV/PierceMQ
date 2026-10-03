@@ -42,6 +42,8 @@ import "embed"
 //     the scheduler retention cycle ensures further months at runtime.
 //   - 000013 adds jobs.owner_user_id (tenant isolation: NULL for legacy
 //     rows, always set for API-created jobs; API reads filter by caller).
+//   - 000014 adds retry_idempotency (POST .../retry Idempotency-Key dedupe:
+//     key PRIMARY KEY, replay of the same key+job returns current state).
 //
 //go:embed *.sql
 var FS embed.FS

@@ -26,8 +26,8 @@ func NewAPIKeysHandler(store *storageauth.Store) http.HandlerFunc {
 			var req struct {
 				Name string `json:"name"`
 			}
-			if err := decodeJSON(r, &req); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
+			if err := decodeJSON(w, r, &req); err != nil {
+				writeDecodeError(w, err)
 				return
 			}
 			plaintext, rec, err := store.CreateKey(r.Context(), userID, strings.TrimSpace(req.Name))
@@ -85,8 +85,8 @@ func NewAPIKeyRevokeHandler(store *storageauth.Store) http.HandlerFunc {
 		var req struct {
 			KeyID string `json:"key_id"`
 		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeDecodeError(w, err)
 			return
 		}
 		keyID, err := uuid.Parse(req.KeyID)

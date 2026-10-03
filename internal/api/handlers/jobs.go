@@ -46,7 +46,8 @@ func jobResponse(job task.Job) map[string]any {
 	return resp
 }
 
-// NewJobsHandler serves the /v1/jobs/{id} subtree:
+// NewJobsHandler serves the /v1/jobs/{id} subtree (plus the bare /jobs/{id}
+// §9 alias registered in routes):
 //
 //	GET    /v1/jobs/{id}          single job (§9.2)
 //	GET    /v1/jobs/{id}/events   status timeline
@@ -58,7 +59,10 @@ func NewJobsHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.HandlerF
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
 			return
 		}
-		rest := strings.TrimPrefix(r.URL.Path, "/v1/jobs/")
+		rest, ok := strings.CutPrefix(r.URL.Path, "/v1/jobs/")
+		if !ok {
+			rest, _ = strings.CutPrefix(r.URL.Path, "/jobs/")
+		}
 		if rest == "" || strings.Contains(rest, "/../") {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing job id"})
 			return
@@ -180,6 +184,11 @@ func cancelJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 // retryJob implements POST /v1/jobs/{id}/retry (§9.6): a failed job returns
 // to pending and is re-dispatched to its stream. On dispatch failure the row
 // stays pending (202 + warning) for the reaper sweep — never rolled back.
+//
+// Idempotency-Key (§9.6) makes resends safe: the first use binds the key to
+// the job; a replay of the same key+job returns the job's current state with
+// deduplicated:true and no second dispatch; a key bound to another job is a
+// 409. Absent header preserves the legacy single-shot behavior.
 func retryJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, rds *broker.RedisStore, jobID uuid.UUID) {
 	userID, _ := auth.UserIDFromContext(r.Context())
 	if _, err := store.GetJobByID(r.Context(), jobID, userID); err != nil {
@@ -189,6 +198,29 @@ func retryJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, rds
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get job failed"})
 		return
+	}
+	if key := strings.TrimSpace(r.Header.Get("Idempotency-Key")); key != "" {
+		dup, err := store.RecordRetryKey(r.Context(), key, jobID)
+		if err != nil {
+			if errors.Is(err, jobs.ErrRetryKeyConflict) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "idempotency key already used by another job"})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "retry job failed"})
+			return
+		}
+		if dup {
+			current, err := store.GetJobByID(r.Context(), jobID, userID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "retry job failed"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"job_id": current.JobID.String(), "status": string(current.Status),
+				"deduplicated": true,
+			})
+			return
+		}
 	}
 	out, err := store.RetryJob(r.Context(), jobID)
 	if err != nil {

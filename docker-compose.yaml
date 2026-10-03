@@ -488,6 +488,8 @@ services:
       PORT: "8000"
       JWT_SECRET: "dev-only-change-me"
       JWT_TTL_HOURS: "24"
+      RATE_LIMIT_RPS: "20"
+      RATE_LIMIT_BURST: "40"
     ports:
       - "8000:8000"
     healthcheck:

@@ -14,7 +14,7 @@
 //	enqueue-cli events --id <uuid>
 //	enqueue-cli list [--status failed] [--limit 50] [--offset 0]
 //	enqueue-cli cancel --id <uuid>
-//	enqueue-cli retry --id <uuid>
+//	enqueue-cli retry --id <uuid> [--idempotency k]
 //	enqueue-cli stats
 package main
 
@@ -189,13 +189,14 @@ func run(ctx context.Context, args []string) error {
 	case "retry":
 		fs := flag.NewFlagSet("retry", flag.ContinueOnError)
 		id := fs.String("id", "", "job id")
+		idempotency := fs.String("idempotency", "", "idempotency key (safe resend)")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
 		if *id == "" {
 			return fmt.Errorf("retry requires --id")
 		}
-		out, err := c.Retry(ctx, *id)
+		out, err := c.RetryWithKey(ctx, *id, *idempotency)
 		if err != nil {
 			return err
 		}

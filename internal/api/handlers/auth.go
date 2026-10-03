@@ -31,8 +31,8 @@ func NewRegisterHandler(store *users.UsersStore) http.HandlerFunc {
 			return
 		}
 		var req registerRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeDecodeError(w, err)
 			return
 		}
 		req.Name = strings.TrimSpace(req.Name)
@@ -69,8 +69,8 @@ func NewLoginHandler(store *users.UsersStore, jwtSecret string, ttl time.Duratio
 			return
 		}
 		var req loginRequest
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeDecodeError(w, err)
 			return
 		}
 		u, err := store.GetUserByEmail(r.Context(), strings.TrimSpace(req.Email))

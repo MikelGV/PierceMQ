@@ -157,8 +157,18 @@ func (c *Client) Cancel(ctx context.Context, jobID string) (map[string]any, erro
 
 // Retry replays a failed job back to pending (POST /v1/jobs/{id}/retry).
 func (c *Client) Retry(ctx context.Context, jobID string) (map[string]any, error) {
+	return c.RetryWithKey(ctx, jobID, "")
+}
+
+// RetryWithKey replays a failed job, sending Idempotency-Key (§9.6) when
+// non-empty so resends return the current state instead of re-dispatching.
+func (c *Client) RetryWithKey(ctx context.Context, jobID, key string) (map[string]any, error) {
 	var out map[string]any
-	err := c.do(ctx, http.MethodPost, "/v1/jobs/"+jobID+"/retry", nil, &out)
+	var headers map[string]string
+	if key != "" {
+		headers = map[string]string{"Idempotency-Key": key}
+	}
+	err := c.doWithHeaders(ctx, http.MethodPost, "/v1/jobs/"+jobID+"/retry", nil, headers, &out)
 	return out, err
 }
 

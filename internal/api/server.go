@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/api/routes"
+	"github.com/MikelGV/PierceMQ/internal/api/middleware"
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
 	"github.com/MikelGV/PierceMQ/internal/storage"
@@ -26,7 +27,9 @@ func NewServer(d routes.Deps) http.Handler {
 	routes.AddRoutes(mux, d)
 
 	var handler http.Handler = mux
-	// Here we set up the middleware like cors or things like that.
+	// Per-caller rate limiting (§7.6, §12.5). Health probes are exempt so
+	// orchestrators never see 429; limits come from d.Config.
+	handler = middleware.RateLimit(d.Config, handler)
 
 	return handler
 }

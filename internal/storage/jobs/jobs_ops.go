@@ -19,6 +19,49 @@ func nullableOwner(owner []uuid.UUID) any {
 	return nil
 }
 
+// ErrRetryKeyConflict is returned when a retry Idempotency-Key was already
+// consumed by a different job. Replays of the same key+job are idempotent
+// (see RecordRetryKey). Detect via errors.Is.
+var ErrRetryKeyConflict = errors.New("jobs: retry idempotency key already used")
+
+// RecordRetryKey consumes a retry idempotency key for jobID (§9.6: the
+// Idempotency-Key header makes POST .../retry safe to resend). First use
+// records (key -> jobID) and reports isDup=false. A replay of the same
+// key+job reports isDup=true with no error: the caller returns the job's
+// current state without re-dispatching. A key bound to another job reports
+// ErrRetryKeyConflict. Empty keys are no-ops (isDup=false, nil error).
+//
+// Fresh-vs-replay comes from RowsAffected of a single INSERT ... ON
+// CONFLICT DO NOTHING, so concurrent replays are race-free.
+func (s *JobsStore) RecordRetryKey(ctx context.Context, key string, jobID uuid.UUID) (isDup bool, err error) {
+	if key == "" {
+		return false, nil
+	}
+	res, err := s.write.ExecContext(ctx,
+		`INSERT INTO retry_idempotency (idempotency_key, job_id) VALUES ($1, $2)
+		ON CONFLICT (idempotency_key) DO NOTHING`, key, jobID)
+	if err != nil {
+		return false, fmt.Errorf("record retry key: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record retry key rows: %w", err)
+	}
+	if n == 1 {
+		return false, nil
+	}
+	var owner uuid.UUID
+	if err := s.write.QueryRowContext(ctx,
+		`SELECT job_id FROM retry_idempotency WHERE idempotency_key = $1`, key,
+	).Scan(&owner); err != nil {
+		return false, fmt.Errorf("read retry key: %w", err)
+	}
+	if owner != jobID {
+		return false, ErrRetryKeyConflict
+	}
+	return true, nil
+}
+
 // ErrNotRetryable is returned when a job cannot be retried: it is not in
 // failed status, or the row is missing. Detect via errors.Is.
 var ErrNotRetryable = errors.New("jobs: not retryable")

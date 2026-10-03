@@ -55,7 +55,7 @@ func AddRoutes(mux *http.ServeMux, d Deps) {
 	}
 	enqueue := handlers.NewEnqueueHandler(d.Jobs, d.Redis)
 	list := handlers.NewJobsListHandler(d.Jobs)
-	mux.HandleFunc("/v1/jobs", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	jobsRoot := authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			enqueue(w, r)
@@ -67,9 +67,16 @@ func AddRoutes(mux *http.ServeMux, d Deps) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		}
-	})))
+	}))
+	// Canonical versioned paths...
+	mux.HandleFunc("/v1/jobs", jobsRoot)
 	mux.HandleFunc("/v1/jobs/", authed(handlers.NewJobsHandler(d.Jobs, d.Redis)))
-	mux.HandleFunc("/v1/stats", authed(handlers.NewStatsHandler(d.Jobs, d.Redis)))
+	stats := authed(handlers.NewStatsHandler(d.Jobs, d.Redis))
+	mux.HandleFunc("/v1/stats", stats)
+	// ...plus bare §9 aliases (same handlers, same auth).
+	mux.HandleFunc("/jobs", jobsRoot)
+	mux.HandleFunc("/jobs/", authed(handlers.NewJobsHandler(d.Jobs, d.Redis)))
+	mux.HandleFunc("/stats", stats)
 	mux.HandleFunc("/v1/keys", authed(handlers.NewAPIKeysHandler(d.Keys)))
 	mux.HandleFunc("/v1/keys/revoke", authed(handlers.NewAPIKeyRevokeHandler(d.Keys)))
 }

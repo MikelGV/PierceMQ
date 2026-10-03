@@ -34,14 +34,27 @@ type enqueueRequest struct {
 	ScheduledAt    string         `json:"scheduled_at"`
 }
 
+// MaxEnqueueBodyBytes caps the whole enqueue envelope (not just payload):
+// non-payload keys bypass the 15KB payload check, so the envelope needs its
+// own bound. 256KB admits any legal job with wide headroom.
+const MaxEnqueueBodyBytes = 256 * 1024
+
 // decodeEnqueueRequest tolerantly decodes the body: unknown fields (e.g.
 // retry_policy/backoff from §9.1 clients) are ignored, schedule_at is
 // accepted as an alias of scheduled_at, and retry_policy.max_retries fills
-// max_retry when the flat field is absent.
-func decodeEnqueueRequest(r *http.Request, req *enqueueRequest) error {
+// max_retry when the flat field is absent. The envelope is capped at
+// MaxEnqueueBodyBytes (errBodyTooLarge on overflow).
+func decodeEnqueueRequest(w http.ResponseWriter, r *http.Request, req *enqueueRequest) error {
+	if r.ContentLength > MaxEnqueueBodyBytes {
+		return errBodyTooLarge
+	}
 	var raw map[string]json.RawMessage
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxEnqueueBodyBytes))
 	if err := dec.Decode(&raw); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return errBodyTooLarge
+		}
 		return err
 	}
 	get := func(keys ...string) json.RawMessage {
@@ -114,8 +127,8 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 		}
 		userID, _ := auth.UserIDFromContext(r.Context())
 		var req enqueueRequest
-		if err := decodeEnqueueRequest(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request: " + err.Error()})
+		if err := decodeEnqueueRequest(w, r, &req); err != nil {
+			writeDecodeError(w, err)
 			return
 		}
 		// Idempotency-Key header (§9.1) wins; body field is the fallback.
