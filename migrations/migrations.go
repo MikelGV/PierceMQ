@@ -44,6 +44,8 @@ import "embed"
 //     rows, always set for API-created jobs; API reads filter by caller).
 //   - 000014 adds retry_idempotency (POST .../retry Idempotency-Key dedupe:
 //     key PRIMARY KEY, replay of the same key+job returns current state).
+//   - 000015 adds recurring-series columns (cron_expr, cron_tz, series_id,
+//     is_recurring) + partial index on series_id for series queries.
 //
 //go:embed *.sql
 var FS embed.FS

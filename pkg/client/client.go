@@ -88,6 +88,8 @@ func (c *Client) Login(ctx context.Context, email, password string) (string, err
 }
 
 // EnqueueRequest mirrors POST /v1/jobs. ScheduledAt is RFC3339 or empty.
+// Cron (5-field standard cron or @-descriptor, with CronTZ IANA timezone)
+// starts a recurring series instead of a one-shot scheduled_at.
 type EnqueueRequest struct {
 	Type           string         `json:"type"`
 	QueueName      string         `json:"queue_name,omitempty"`
@@ -96,6 +98,8 @@ type EnqueueRequest struct {
 	MaxRetry       int16          `json:"max_retry,omitempty"`
 	IdempotencyKey string         `json:"idempotency_key,omitempty"`
 	ScheduledAt    string         `json:"scheduled_at,omitempty"`
+	Cron           string         `json:"cron,omitempty"`
+	CronTZ         string         `json:"cron_tz,omitempty"`
 }
 
 // Enqueue performs the DB-first dual write via the API. The idempotency key
@@ -149,9 +153,38 @@ func (c *Client) ListJobs(ctx context.Context, status string, limit, offset int)
 }
 
 // Cancel cancels a not-yet-running job (DELETE /v1/jobs/{id}).
+// With series=true it cancels every not-yet-running member of the job's
+// recurring series instead (?series=true).
 func (c *Client) Cancel(ctx context.Context, jobID string) (map[string]any, error) {
+	return c.CancelSeries(ctx, jobID, false)
+}
+
+// CancelSeries cancels one job, or its whole recurring series when series
+// is true.
+func (c *Client) CancelSeries(ctx context.Context, jobID string, series bool) (map[string]any, error) {
+	path := "/v1/jobs/" + jobID
+	if series {
+		path += "?series=true"
+	}
 	var out map[string]any
-	err := c.do(ctx, http.MethodDelete, "/v1/jobs/"+jobID, nil, &out)
+	err := c.do(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
+// ListSeries lists members of a recurring series newest-first.
+func (c *Client) ListSeries(ctx context.Context, seriesID, status string, limit, offset int) (map[string]any, error) {
+	path := "/v1/jobs?series_id=" + seriesID + "&"
+	if status != "" {
+		path += "status=" + status + "&"
+	}
+	if limit > 0 {
+		path += fmt.Sprintf("limit=%d&", limit)
+	}
+	if offset > 0 {
+		path += fmt.Sprintf("offset=%d", offset)
+	}
+	var out map[string]any
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
 

@@ -50,6 +50,12 @@ type Job struct {
 	ClaimToken     uuid.NullUUID
 	IdempotencyKey sql.NullString
 	OwnerUserID    uuid.NullUUID
+	// Recurring-series fields (migrations/000015). CronExpr/TZ describe the
+	// series cadence; SeriesID groups occurrences; IsRecurring marks members.
+	CronExpr    sql.NullString
+	CronTZ      sql.NullString
+	SeriesID    uuid.NullUUID
+	IsRecurring bool
 	ScheduledAt    sql.NullTime
 	NotBefore      sql.NullTime
 	CreatedAt      time.Time

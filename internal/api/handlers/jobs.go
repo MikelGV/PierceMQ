@@ -43,6 +43,16 @@ func jobResponse(job task.Job) map[string]any {
 	if job.LastError.Valid {
 		resp["last_error"] = job.LastError.String
 	}
+	resp["is_recurring"] = job.IsRecurring
+	if job.CronExpr.Valid {
+		resp["cron"] = job.CronExpr.String
+	}
+	if job.CronTZ.Valid {
+		resp["cron_tz"] = job.CronTZ.String
+	}
+	if job.SeriesID.Valid {
+		resp["series_id"] = job.SeriesID.UUID.String()
+	}
 	return resp
 }
 
@@ -157,14 +167,31 @@ func getEvents(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 // cancelJob implements DELETE /v1/jobs/{id} (§9.3): only not-yet-running jobs
 // may cancel; anything else is a 409. The orphaned stream entry (if any) is
 // left for the claim guard to ack + skip.
+//
+// ?series=true cancels the whole recurring series instead: every
+// not-yet-running member owned by the caller moves to cancelled and future
+// occurrences stop. Running/terminal members are left alone.
 func cancelJob(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jobID uuid.UUID) {
 	userID, _ := auth.UserIDFromContext(r.Context())
-	if _, err := store.GetJobByID(r.Context(), jobID, userID); err != nil {
+	job, err := store.GetJobByID(r.Context(), jobID, userID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get job failed"})
+		return
+	}
+	if r.URL.Query().Get("series") == "true" && job.SeriesID.Valid {
+		n, err := store.CancelSeries(r.Context(), job.SeriesID.UUID, userID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cancel series failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"job_id": jobID.String(), "status": string(task.JobCancelled),
+			"series_id": job.SeriesID.UUID.String(), "cancelled_count": n,
+		})
 		return
 	}
 	out, err := store.CancelJob(r.Context(), jobID)

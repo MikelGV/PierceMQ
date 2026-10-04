@@ -29,9 +29,10 @@ var validListStatuses = map[string]bool{
 	string(task.JobCancelled): true,
 }
 
-// NewJobsListHandler serves GET /v1/jobs?status=&limit=&offset= (§9.4-9.5).
-// Limit defaults to 50 and caps at 100; offset defaults to 0. Unknown status
-// or non-integer paging is a 400.
+// NewJobsListHandler serves GET /v1/jobs?status=&limit=&offset= (§9.4-9.5)
+// plus ?series_id= for recurring-series members. Limit defaults to 50 and
+// caps at 100; offset defaults to 0. Unknown status, malformed series_id, or
+// non-integer paging is a 400.
 func NewJobsListHandler(store *jobs.JobsStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -69,6 +70,25 @@ func NewJobsListHandler(store *jobs.JobsStore) http.HandlerFunc {
 				return
 			}
 			offset = n
+		}
+
+		if raw := q.Get("series_id"); raw != "" {
+			seriesID, err := uuid.Parse(raw)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "series_id must be a UUID"})
+				return
+			}
+			list, err := store.ListSeriesJobs(r.Context(), seriesID, task.JobStatus(status), limit, offset, mustUserID(r))
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list jobs failed"})
+				return
+			}
+			out := make([]map[string]any, 0, len(list))
+			for _, job := range list {
+				out = append(out, jobResponse(job))
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"jobs": out, "series_id": seriesID.String()})
+			return
 		}
 
 		list, err := store.ListJobs(r.Context(), task.JobStatus(status), limit, offset, mustUserID(r))

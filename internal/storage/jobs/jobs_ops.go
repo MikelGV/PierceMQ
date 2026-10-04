@@ -160,6 +160,117 @@ func (s *JobsStore) CancelJob(ctx context.Context, jobID uuid.UUID) (task.Job, e
 	return out, nil
 }
 
+// ListSeriesJobs returns members of a recurring series newest-first,
+// optionally filtered by status. Owner scoping matches ListJobs: callers
+// passing a user_id see only their rows.
+func (s *JobsStore) ListSeriesJobs(ctx context.Context, seriesID uuid.UUID, status task.JobStatus, limit, offset int, owner ...uuid.UUID) ([]task.Job, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := s.read.QueryContext(ctx,
+		`SELECT `+jobColumns+` FROM jobs
+		WHERE series_id = $1
+			AND ($2 = '' OR status = $2::job_status)
+			AND ($5::UUID IS NULL OR owner_user_id = $5)
+		ORDER BY created_at DESC LIMIT $3 OFFSET $4`,
+		seriesID, string(status), limit, offset, nullableOwner(owner))
+	if err != nil {
+		return nil, fmt.Errorf("list series jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []task.Job
+	for rows.Next() {
+		var job task.Job
+		if err := scanJobRow(&job, rows); err != nil {
+			return nil, fmt.Errorf("scan series job: %w", err)
+		}
+		hydratePayload(&job)
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows series jobs: %w", err)
+	}
+	return out, nil
+}
+
+// CancelSeries cancels every not-yet-running member (scheduled, pending, or
+// queued) of a recurring series. Running and terminal members are left
+// alone, matching single CancelJob semantics; future occurrences stop
+// because promotion only fires on scheduled rows. Each cancellation appends
+// an old→cancelled job_events row. Returns the number cancelled.
+//
+// Concurrency: SELECT ... FOR UPDATE SKIP LOCKED, so concurrent cancellers
+// never double-cancel; the status-guarded UPDATE skips lost races.
+func (s *JobsStore) CancelSeries(ctx context.Context, seriesID uuid.UUID, owner ...uuid.UUID) (int64, error) {
+	tx, err := s.write.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT job_id, status FROM jobs
+		WHERE series_id = $1 AND status IN ('scheduled', 'pending', 'queued')
+			AND ($2::UUID IS NULL OR owner_user_id = $2)
+		ORDER BY scheduled_at FOR UPDATE SKIP LOCKED`,
+		seriesID, nullableOwner(owner))
+	if err != nil {
+		return 0, fmt.Errorf("select series jobs: %w", err)
+	}
+	type cancellable struct {
+		id     uuid.UUID
+		status task.JobStatus
+	}
+	var targets []cancellable
+	for rows.Next() {
+		var c cancellable
+		if err := rows.Scan(&c.id, &c.status); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan series job: %w", err)
+		}
+		targets = append(targets, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("rows series jobs: %w", err)
+	}
+	rows.Close()
+
+	var n int64
+	for _, c := range targets {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE jobs SET status = 'cancelled', completed_at = now()
+			WHERE job_id = $1 AND status IN ('scheduled', 'pending', 'queued')`, c.id)
+		if err != nil {
+			return 0, fmt.Errorf("cancel series job %s: %w", c.id, err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("cancel series job rows %s: %w", c.id, err)
+		}
+		if affected == 0 {
+			continue
+		}
+		if err := insertEvent(ctx, tx, c.id, c.status, task.JobCancelled); err != nil {
+			return 0, err
+		}
+		n++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return n, nil
+}
+
 // ListJobs returns jobs newest-first, optionally filtered by status
 // (§9.4-9.5). Empty status lists all. Limit is clamped to 1..100; offset must
 // be >= 0. Served from the read pool: a few seconds of lag is accepted for

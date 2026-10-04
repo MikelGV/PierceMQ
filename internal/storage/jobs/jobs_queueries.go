@@ -58,6 +58,13 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		}
 	}
 
+	// cron_tz is NOT NULL DEFAULT 'UTC': normalize missing to UTC so plain
+	// one-shot inserts never send NULL.
+	cronTZ := in.CronTZ
+	if !cronTZ.Valid || cronTZ.String == "" {
+		cronTZ = sql.NullString{String: "UTC", Valid: true}
+	}
+
 	tx, err := s.write.BeginTx(ctx, nil)
 	if err != nil {
 		return out, fmt.Errorf("begin tx: %w", err)
@@ -75,10 +82,14 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		max_retry,
 		idempotency_key,
 		owner_user_id,
+		cron_expr,
+		cron_tz,
+		series_id,
+		is_recurring,
 		scheduled_at,
 		not_before,
 		created_at
-	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	) VALUES ($1, $2::job_status, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	ON CONFLICT (idempotency_key, created_at) WHERE idempotency_key IS NOT NULL DO NOTHING
 	RETURNING job_id, status, created_at, attempt_count, max_retry, priority;`
 
@@ -93,6 +104,10 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 		in.MaxRetry,
 		in.IdempotencyKey,
 		in.OwnerUserID,
+		in.CronExpr,
+		cronTZ,
+		in.SeriesID,
+		in.IsRecurring,
 		in.ScheduledAt,
 		in.NotBefore,
 		in.CreatedAt,
@@ -144,6 +159,10 @@ func (s *JobsStore) CreateJob(ctx context.Context, in task.Job) (task.Job, error
 	out.QueueName = in.QueueName
 	out.IdempotencyKey = in.IdempotencyKey
 	out.OwnerUserID = in.OwnerUserID
+	out.CronExpr = in.CronExpr
+	out.CronTZ = cronTZ
+	out.SeriesID = in.SeriesID
+	out.IsRecurring = in.IsRecurring
 	out.ScheduledAt = in.ScheduledAt
 	out.NotBefore = in.NotBefore
 	return out, nil

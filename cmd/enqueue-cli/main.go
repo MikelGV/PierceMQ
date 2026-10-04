@@ -9,11 +9,11 @@
 //
 //	enqueue-cli register --name n --email e --password p
 //	enqueue-cli login --email e --password p
-//	enqueue-cli submit --type email --payload '{"to":"a","from":"b"}' [--queue email-high] [--priority 1] [--max-retry 3] [--idempotency k] [--scheduled-at RFC3339]
+//	enqueue-cli submit --type email --payload '{"to":"a","from":"b"}' [--queue email-high] [--priority 1] [--max-retry 3] [--idempotency k] [--scheduled-at RFC3339 | --cron '*/5 * * * *' --cron-tz UTC]
 //	enqueue-cli get --id <uuid>
 //	enqueue-cli events --id <uuid>
-//	enqueue-cli list [--status failed] [--limit 50] [--offset 0]
-//	enqueue-cli cancel --id <uuid>
+//	enqueue-cli list [--status failed] [--limit 50] [--offset 0] [--series-id <uuid>]
+//	enqueue-cli cancel --id <uuid> [--series]
 //	enqueue-cli retry --id <uuid> [--idempotency k]
 //	enqueue-cli stats
 package main
@@ -97,6 +97,8 @@ func run(ctx context.Context, args []string) error {
 		maxRetry := fs.Int("max-retry", 0, "max retries (0 = server default 3)")
 		idempotency := fs.String("idempotency", "", "idempotency key")
 		scheduledAt := fs.String("scheduled-at", "", "RFC3339 future time")
+		cron := fs.String("cron", "", "recurring cron (5-field or @-descriptor, exclusive with --scheduled-at)")
+		cronTZ := fs.String("cron-tz", "", "IANA timezone for --cron (default UTC)")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
@@ -126,6 +128,8 @@ func run(ctx context.Context, args []string) error {
 			MaxRetry:       int16(*maxRetry),
 			IdempotencyKey: *idempotency,
 			ScheduledAt:    *scheduledAt,
+			Cron:           *cron,
+			CronTZ:         *cronTZ,
 		})
 		if err != nil {
 			return err
@@ -164,10 +168,17 @@ func run(ctx context.Context, args []string) error {
 		status := fs.String("status", "", "status filter")
 		limit := fs.Int("limit", 0, "page size (server default 50, max 100)")
 		offset := fs.Int("offset", 0, "page offset")
+		seriesID := fs.String("series-id", "", "recurring series id filter")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		out, err := c.ListJobs(ctx, *status, *limit, *offset)
+		var out map[string]any
+		var err error
+		if *seriesID != "" {
+			out, err = c.ListSeries(ctx, *seriesID, *status, *limit, *offset)
+		} else {
+			out, err = c.ListJobs(ctx, *status, *limit, *offset)
+		}
 		if err != nil {
 			return err
 		}
@@ -175,13 +186,14 @@ func run(ctx context.Context, args []string) error {
 	case "cancel":
 		fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
 		id := fs.String("id", "", "job id")
+		series := fs.Bool("series", false, "cancel the whole recurring series")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
 		if *id == "" {
 			return fmt.Errorf("cancel requires --id")
 		}
-		out, err := c.Cancel(ctx, *id)
+		out, err := c.CancelSeries(ctx, *id, *series)
 		if err != nil {
 			return err
 		}

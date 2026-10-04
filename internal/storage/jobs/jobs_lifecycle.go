@@ -39,6 +39,10 @@ func scanJobRow(job *task.Job, row interface {
 		&job.ClaimToken,
 		&job.IdempotencyKey,
 		&job.OwnerUserID,
+		&job.CronExpr,
+		&job.CronTZ,
+		&job.SeriesID,
+		&job.IsRecurring,
 		&job.ScheduledAt,
 		&job.NotBefore,
 		&job.CreatedAt,
@@ -51,7 +55,7 @@ func scanJobRow(job *task.Job, row interface {
 
 const jobColumns = `job_id, status, type, payload_ref, queue_name, priority,
 	attempt_count, max_retry, worker_id, claim_token, idempotency_key,
-	owner_user_id,
+	owner_user_id, cron_expr, cron_tz, series_id, is_recurring,
 	scheduled_at, not_before, created_at, started_at, completed_at, heartbeat_at, last_error`
 
 // hydratePayload best-effort decodes payload_ref JSON into Payload so the
@@ -74,6 +78,21 @@ func insertEvent(ctx context.Context, q interface {
 		event_id, job_id, old_status, new_status, occurred_at
 	) VALUES (gen_random_uuid(), $1, $2::job_status, $3::job_status, now())`,
 		jobID, string(oldStatus), string(newStatus))
+	if err != nil {
+		return fmt.Errorf("insert job_event: %w", err)
+	}
+	return nil
+}
+
+// insertInitialEvent records the birth of a job row (old_status NULL), used
+// for series follow-ups created outside CreateJob.
+func insertInitialEvent(ctx context.Context, q interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, jobID uuid.UUID, newStatus task.JobStatus) error {
+	_, err := q.ExecContext(ctx, `INSERT INTO job_events (
+		event_id, job_id, old_status, new_status, occurred_at
+	) VALUES (gen_random_uuid(), $1, NULL, $2::job_status, now())`,
+		jobID, string(newStatus))
 	if err != nil {
 		return fmt.Errorf("insert job_event: %w", err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/MikelGV/PierceMQ/internal/auth"
 	"github.com/MikelGV/PierceMQ/internal/broker"
+	"github.com/MikelGV/PierceMQ/internal/cronx"
 	"github.com/MikelGV/PierceMQ/internal/queue"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
@@ -32,6 +33,10 @@ type enqueueRequest struct {
 	MaxRetry       int16          `json:"max_retry"`
 	IdempotencyKey string         `json:"idempotency_key"`
 	ScheduledAt    string         `json:"scheduled_at"`
+	// Cron starts a recurring series (5-field standard cron or @-descriptor);
+	// CronTZ is the IANA timezone the expression is evaluated in (UTC).
+	Cron   string `json:"cron"`
+	CronTZ string `json:"cron_tz"`
 }
 
 // MaxEnqueueBodyBytes caps the whole enqueue envelope (not just payload):
@@ -107,6 +112,16 @@ func decodeEnqueueRequest(w http.ResponseWriter, r *http.Request, req *enqueueRe
 			return err
 		}
 	}
+	if v := get("cron", "cron_expr"); v != nil {
+		if err := json.Unmarshal(v, &req.Cron); err != nil {
+			return err
+		}
+	}
+	if v := get("cron_tz", "timezone"); v != nil {
+		if err := json.Unmarshal(v, &req.CronTZ); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -165,7 +180,30 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 		if req.IdempotencyKey != "" {
 			in.IdempotencyKey = sql.NullString{String: req.IdempotencyKey, Valid: true}
 		}
-		if req.ScheduledAt != "" {
+		if strings.TrimSpace(req.Cron) != "" {
+			// Recurring series: cron and one-shot scheduled_at are mutually
+			// exclusive; the first occurrence fires at the next cron time.
+			if strings.TrimSpace(req.ScheduledAt) != "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cron and scheduled_at are mutually exclusive"})
+				return
+			}
+			tz := strings.TrimSpace(req.CronTZ)
+			if tz == "" {
+				tz = cronx.DefaultTZ
+			}
+			next, err := cronx.NextAfter(req.Cron, tz, time.Now().UTC())
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron: " + err.Error()})
+				return
+			}
+			seriesID := uuid.New()
+			in.IsRecurring = true
+			in.CronExpr = sql.NullString{String: strings.TrimSpace(req.Cron), Valid: true}
+			in.CronTZ = sql.NullString{String: tz, Valid: true}
+			in.SeriesID = uuid.NullUUID{UUID: seriesID, Valid: true}
+			in.ScheduledAt = sql.NullTime{Time: next.UTC(), Valid: true}
+			in.Status = task.JobScheduled
+		} else if req.ScheduledAt != "" {
 			ts, err := time.Parse(time.RFC3339, req.ScheduledAt)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scheduled_at must be RFC3339"})
@@ -189,9 +227,18 @@ func NewEnqueueHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handl
 
 		// Scheduled-future jobs wait for the scheduler; no stream write.
 		if created.Status == task.JobScheduled {
-			writeJSON(w, http.StatusCreated, map[string]any{
+			resp := map[string]any{
 				"job_id": created.JobID.String(), "status": string(created.Status),
-			})
+			}
+			if created.IsRecurring {
+				resp["series_id"] = created.SeriesID.UUID.String()
+				resp["cron"] = created.CronExpr.String
+				resp["cron_tz"] = created.CronTZ.String
+				if created.ScheduledAt.Valid {
+					resp["scheduled_at"] = created.ScheduledAt.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+				}
+			}
+			writeJSON(w, http.StatusCreated, resp)
 			return
 		}
 
