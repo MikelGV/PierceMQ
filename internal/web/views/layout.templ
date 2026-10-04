@@ -1,0 +1,36 @@
+package views
+
+templ Layout(title string, authed bool) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title } · PierceMQ</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+		</head>
+		<body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+			<nav class="border-b border-zinc-800 bg-zinc-900/60">
+				<div class="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
+					<a href="/" class="text-lg font-bold tracking-tight">Pierce<span class="text-emerald-400">MQ</span></a>
+					if authed {
+						<a href="/" class="text-sm text-zinc-300 hover:text-white">Dashboard</a>
+						<a href="/jobs/new" class="text-sm text-zinc-300 hover:text-white">New job</a>
+						<span class="flex-1"></span>
+						<form method="POST" action="/logout">
+							<button type="submit" class="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">Logout</button>
+						</form>
+					} else {
+						<span class="flex-1"></span>
+						<a href="/login" class="text-sm text-zinc-300 hover:text-white">Login</a>
+						<a href="/register" class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500">Register</a>
+					}
+				</div>
+			</nav>
+			<main class="mx-auto max-w-6xl px-4 py-6">
+				{ children... }
+			</main>
+			<script src="/static/htmx.min.js"></script>
+		</body>
+	</html>
+}

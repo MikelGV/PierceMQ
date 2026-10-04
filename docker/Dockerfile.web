@@ -1,2 +1,41 @@
-
+# Web dashboard (templ + Tailwind + htmx, server-rendered, proxies to the API).
+#
+# Build inputs:
+# - *_templ.go is generated in-builder via `go tool templ` (also checked in,
+#   so local `go build`/`go test` work with no extra steps).
+# - internal/web/static/app.css is built in-builder from web/input.css with
+#   the pinned standalone tailwindcss binary (checksum-verified, no npm) and
+#   is NOT committed: compilation and tests never depend on it (only styling
+#   degrades without it).
+# - htmx is vendored at internal/web/static/htmx.min.js (no CDN at runtime).
+#
+# Local CSS rebuild (needs the standalone binary, see ARG/SHA below):
+#   tailwindcss -i web/input.css -o internal/web/static/app.css --minify
 FROM golang:1.25.5-alpine AS builder
+WORKDIR /app
+
+# Pinned Tailwind v4 standalone CLI (musl build for Alpine).
+ARG TAILWIND_VERSION=v4.3.3
+ARG TAILWIND_SHA256=a04d34ceacc8f52cbe8920ad846cdeb61d3d0021dba32db0d1f77c9d9fad7a6c
+RUN apk add --no-cache curl libstdc++ libgcc \
+ && curl -fsSL -o /usr/local/bin/tailwindcss \
+      "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-x64-musl" \
+ && echo "${TAILWIND_SHA256}  /usr/local/bin/tailwindcss" | sha256sum -c - \
+ && chmod +x /usr/local/bin/tailwindcss
+
+# Download module dependencies (layer caching).
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source.
+COPY . .
+
+# Generate templ code, build minified CSS, compile binary.
+RUN go tool templ generate \
+ && tailwindcss -i web/input.css -o internal/web/static/app.css --minify \
+ && CGO_ENABLED=0 go build -o /web ./cmd/web
+
+FROM alpine:3.22
+WORKDIR /app
+COPY --from=builder /web /web
+ENTRYPOINT ["/web"]

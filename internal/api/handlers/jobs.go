@@ -147,7 +147,7 @@ func getEvents(w http.ResponseWriter, r *http.Request, store *jobs.JobsStore, jo
 	out := make([]map[string]any, 0, len(events))
 	for _, e := range events {
 		m := map[string]any{
-			"event_id": e.EventID.String(),
+			"event_id":   e.EventID.String(),
 			"new_status": string(e.NewStatus), "occurred_at": e.Occurred.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		}
 		if e.OldStatus.Valid {

@@ -48,16 +48,16 @@ func NewStatsHandler(store *jobs.JobsStore, rds *broker.RedisStore) http.Handler
 		}
 		workers, depth := redisSignals(r.Context(), rds)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"pending":               counts.Pending + counts.Queued,
-			"queued":                counts.Queued,
-			"processing":            counts.Running,
-			"completed":             counts.Completed,
-			"failed":                counts.Failed,
-			"scheduled":             counts.Scheduled,
-			"cancelled":             counts.Cancelled,
+			"pending":                counts.Pending + counts.Queued,
+			"queued":                 counts.Queued,
+			"processing":             counts.Running,
+			"completed":              counts.Completed,
+			"failed":                 counts.Failed,
+			"scheduled":              counts.Scheduled,
+			"cancelled":              counts.Cancelled,
 			"pending_oldest_age_sec": pendingAge,
-			"total_workers":         workers,
-			"queue_depth":           depth,
+			"total_workers":          workers,
+			"queue_depth":            depth,
 		})
 	}
 }

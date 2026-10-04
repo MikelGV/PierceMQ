@@ -1,0 +1,13 @@
+package views
+
+import "strconv"
+
+templ ErrorPage(code int, msg string) {
+	@Layout("Error", true) {
+		<div class="mx-auto mt-16 max-w-md text-center">
+			<div class="text-5xl font-bold text-zinc-700">{ strconv.Itoa(code) }</div>
+			<p class="mt-2 text-sm text-zinc-400">{ msg }</p>
+			<a href="/" class="mt-4 inline-block rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700">Back to dashboard</a>
+		</div>
+	}
+}

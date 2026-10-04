@@ -56,13 +56,13 @@ type Job struct {
 	CronTZ      sql.NullString
 	SeriesID    uuid.NullUUID
 	IsRecurring bool
-	ScheduledAt    sql.NullTime
-	NotBefore      sql.NullTime
-	CreatedAt      time.Time
-	StartedAt      sql.NullTime
-	CompletedAt    sql.NullTime
-	HeartbeatAt    sql.NullTime
-	LastError      sql.NullString
+	ScheduledAt sql.NullTime
+	NotBefore   sql.NullTime
+	CreatedAt   time.Time
+	StartedAt   sql.NullTime
+	CompletedAt sql.NullTime
+	HeartbeatAt sql.NullTime
+	LastError   sql.NullString
 }
 
 /**

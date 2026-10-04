@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MikelGV/PierceMQ/internal/api/routes"
 	"github.com/MikelGV/PierceMQ/internal/api/middleware"
+	"github.com/MikelGV/PierceMQ/internal/api/routes"
 	"github.com/MikelGV/PierceMQ/internal/broker"
 	"github.com/MikelGV/PierceMQ/internal/config"
 	"github.com/MikelGV/PierceMQ/internal/storage"

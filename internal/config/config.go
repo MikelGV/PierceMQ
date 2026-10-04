@@ -7,7 +7,8 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/broker"
 )
 
-type Config struct {	Port        string
+type Config struct {
+	Port        string
 	Host        string
 	RedisURI    string
 	PSQLURI     string

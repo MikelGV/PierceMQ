@@ -1,0 +1,177 @@
+package views
+
+templ fieldRow(label string, value string) {
+	<div class="flex justify-between gap-4 border-b border-zinc-800/60 py-2 text-sm">
+		<dt class="shrink-0 text-zinc-500">{ label }</dt>
+		<dd class="truncate text-right font-mono text-xs text-zinc-200" title={ value }>{ value }</dd>
+	</div>
+}
+
+templ JobDetail(job Job, events []JobEvent) {
+	@Layout("Job "+ShortID(job.ID), true) {
+		<div class="mb-4 flex flex-wrap items-center gap-3">
+			<a href="/" class="text-sm text-zinc-400 hover:text-white">← Dashboard</a>
+			<h1 class="font-mono text-lg">{ ShortID(job.ID) }</h1>
+			<span class={ StatusBadge(job.Status) }>{ job.Status }</span>
+			if job.IsRecurring {
+				<a href={ "/?series_id=" + job.SeriesID } class="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-300 ring-1 ring-violet-500/30">↻ series</a>
+			}
+			<span class="flex-1"></span>
+			if Retryable(job.Status) {
+				<form method="POST" action={ "/jobs/" + job.ID + "/retry" }>
+					<button type="submit" class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500">Retry</button>
+				</form>
+			}
+			if Cancellable(job.Status) {
+				<form method="POST" action={ "/jobs/" + job.ID + "/cancel" }>
+					<button type="submit" class="rounded-md bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700">Cancel</button>
+				</form>
+				if job.IsRecurring {
+					<form method="POST" action={ "/jobs/" + job.ID + "/cancel?series=true" }>
+						<button type="submit" class="rounded-md bg-red-600/80 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600">Cancel series</button>
+					</form>
+				}
+			}
+		</div>
+		<div class="grid gap-4 md:grid-cols-2">
+			<div class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+				<h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Job</h2>
+				<dl>
+					@fieldRow("id", job.ID)
+					@fieldRow("type", job.Type)
+					@fieldRow("queue", job.Queue)
+					@fieldRow("priority", Num(int64(job.Priority)))
+					@fieldRow("attempt", Num(int64(job.Attempt))+" / "+Num(int64(job.MaxRetry)))
+					@fieldRow("created", job.CreatedAt)
+					if job.StartedAt != "" {
+						@fieldRow("started", job.StartedAt)
+					}
+					if job.CompletedAt != "" {
+						@fieldRow("completed", job.CompletedAt)
+					}
+					if job.ScheduledAt != "" {
+						@fieldRow("scheduled for", job.ScheduledAt)
+					}
+					if job.IsRecurring {
+						@fieldRow("cron", job.Cron+" ("+job.CronTZ+")")
+						@fieldRow("series", job.SeriesID)
+					}
+					if job.LastError != "" {
+						@fieldRow("last error", job.LastError)
+					}
+				</dl>
+			</div>
+			<div class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+				<h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Payload</h2>
+				if job.PayloadStr != "" {
+					<pre class="overflow-auto rounded bg-zinc-950 p-3 font-mono text-xs text-zinc-300">{ job.PayloadStr }</pre>
+				} else {
+					<p class="text-sm text-zinc-500">No payload.</p>
+				}
+			</div>
+		</div>
+		<div class="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+			<h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Timeline</h2>
+			if len(events) == 0 {
+				<p class="text-sm text-zinc-500">No events recorded.</p>
+			} else {
+				<table class="w-full border-collapse text-sm">
+					<thead>
+						<tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+							<th class="py-1 font-medium">When</th>
+							<th class="py-1 font-medium">Transition</th>
+							<th class="py-1 font-medium">Worker</th>
+							<th class="py-1 font-medium">Reason</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, e := range events {
+							<tr class="border-t border-zinc-800/60">
+								<td class="py-1.5 pr-3 font-mono text-xs text-zinc-400">{ e.At }</td>
+								<td class="py-1.5 pr-3">
+									if e.Old != "" {
+										<span class="text-zinc-500">{ e.Old } →</span>
+									}
+									<span class={ StatusBadge(e.New) }>{ e.New }</span>
+								</td>
+								<td class="py-1.5 pr-3 font-mono text-xs text-zinc-400">{ e.Worker }</td>
+								<td class="py-1.5 text-xs text-zinc-400">{ e.Reason }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+}
+
+templ JobNew(form JobForm, errMsg string) {
+	@Layout("New job", true) {
+		<div class="mb-4 flex items-center gap-3">
+			<a href="/" class="text-sm text-zinc-400 hover:text-white">← Dashboard</a>
+			<h1 class="text-xl font-semibold">New job</h1>
+		</div>
+		<div class="max-w-2xl rounded-lg border border-zinc-800 bg-zinc-900 p-6">
+			if errMsg != "" {
+				<div class="mb-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-300 ring-1 ring-red-500/30">{ errMsg }</div>
+			}
+			<form method="POST" action="/jobs" class="space-y-4">
+				<div class="grid gap-4 md:grid-cols-2">
+					<div>
+						<label for="type" class="block text-sm font-medium text-zinc-300">Type</label>
+						<select id="type" name="type" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
+							<option value="email" selected?={ form.Type == "" || form.Type == "email" }>email</option>
+							<option value="file_processing" selected?={ form.Type == "file_processing" }>file_processing</option>
+							<option value="exec_processing" selected?={ form.Type == "exec_processing" }>exec_processing</option>
+						</select>
+					</div>
+					<div>
+						<label for="queue_name" class="block text-sm font-medium text-zinc-300">Queue <span class="text-zinc-500">(default &lt;type&gt;-high)</span></label>
+						<input id="queue_name" name="queue_name" type="text" value={ form.QueueName } placeholder="email-high"
+							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 focus:border-emerald-500 focus:outline-none"/>
+					</div>
+				</div>
+				<div>
+					<label for="payload" class="block text-sm font-medium text-zinc-300">Payload <span class="text-zinc-500">(JSON object, ≤15KB)</span></label>
+					<textarea id="payload" name="payload" rows="5" placeholder={ "{\n  \"to\": \"b@example.com\"\n}" }
+						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none">{ form.Payload }</textarea>
+				</div>
+				<div class="grid gap-4 md:grid-cols-2">
+					<div>
+						<label for="priority" class="block text-sm font-medium text-zinc-300">Priority</label>
+						<input id="priority" name="priority" type="number" value={ form.Priority } placeholder="0"
+							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 focus:border-emerald-500 focus:outline-none"/>
+					</div>
+					<div>
+						<label for="max_retry" class="block text-sm font-medium text-zinc-300">Max retries <span class="text-zinc-500">(default 3)</span></label>
+						<input id="max_retry" name="max_retry" type="number" min="0" value={ form.MaxRetry } placeholder="3"
+							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 focus:border-emerald-500 focus:outline-none"/>
+					</div>
+				</div>
+				<div>
+					<label for="scheduled_at" class="block text-sm font-medium text-zinc-300">Run at <span class="text-zinc-500">(RFC3339, or leave empty)</span></label>
+					<input id="scheduled_at" name="scheduled_at" type="text" value={ form.ScheduledAt } placeholder="2026-10-05T14:00:00Z"
+						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
+				</div>
+				<div class="grid gap-4 md:grid-cols-2">
+					<div>
+						<label for="cron" class="block text-sm font-medium text-zinc-300">Cron <span class="text-zinc-500">(recurring, exclusive with run-at)</span></label>
+						<input id="cron" name="cron" type="text" value={ form.Cron } placeholder="*/5 * * * *"
+							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
+					</div>
+					<div>
+						<label for="cron_tz" class="block text-sm font-medium text-zinc-300">Timezone</label>
+						<input id="cron_tz" name="cron_tz" type="text" value={ form.CronTZ } placeholder="UTC"
+							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
+					</div>
+				</div>
+				<div>
+					<label for="idempotency_key" class="block text-sm font-medium text-zinc-300">Idempotency key <span class="text-zinc-500">(optional)</span></label>
+					<input id="idempotency_key" name="idempotency_key" type="text" value={ form.IdempotencyKey }
+						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
+				</div>
+				<button type="submit" class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">Enqueue job</button>
+			</form>
+		</div>
+	}
+}

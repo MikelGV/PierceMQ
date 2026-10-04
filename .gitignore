@@ -1,2 +1,4 @@
 AGENTS.md
 /docker/pgbouncer/userlist.txt
+/web/node_modules/
+/internal/web/static/app.css
