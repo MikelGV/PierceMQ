@@ -418,6 +418,9 @@ services:
         condition: service_healthy
     environment:
       REDIS_ADDR: redis://:123456890ca@redis:6379/0
+      DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
+      DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
+    restart: always
     networks:
       - piercemq
     #develop:

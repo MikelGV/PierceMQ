@@ -296,7 +296,17 @@ func (wo *Worker) runPool(ctx context.Context, w io.Writer, getenv func(string) 
 
 	// PG handle for claim → running → heartbeat → completed/failed.
 	// Fail fast like the API: a pool without a database cannot advance jobs.
-	dbStores, err := storage.Connect(ctx, getenv("DB_URL"), getenv("DB_READ_URL"))
+	// Defaults mirror config.Env so local `go run ./cmd/worker` works
+	// without explicit env; compose sets explicit pgbouncer DSNs.
+	dbURL := getenv("DB_URL")
+	if dbURL == "" {
+		dbURL = "postgres://admin:admin@localhost:6432/piercemq?sslmode=disable"
+	}
+	dbReadURL := getenv("DB_READ_URL")
+	if dbReadURL == "" {
+		dbReadURL = "postgres://admin:admin@localhost:6432/piercemq_ro?sslmode=disable"
+	}
+	dbStores, err := storage.Connect(ctx, dbURL, dbReadURL)
 	if err != nil {
 		return fmt.Errorf("pool %s: db connect failed: %w", poolType, err)
 	}
