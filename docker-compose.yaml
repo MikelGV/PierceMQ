@@ -405,6 +405,65 @@ services:
     #      path: .
     #      target: ./
 
+  # --- Local SMTP sink for worker email jobs. MailHog catches everything
+  # sent via SMTP_HOST=mailhog:1025; browse at http://localhost:8025.
+  # Production: point SMTP_HOST/PORT/USER/PASS at a real relay instead.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    restart: always
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web UI
+    networks:
+      - piercemq
+
+  # --- Local S3-compatible store for worker file jobs (S3_ENDPOINT).
+  # Console at http://localhost:9001 (minioadmin/minioadmin).
+  # Chainguard's image (MinIO stopped publishing to Docker Hub/Quay):
+  # :latest-dev variant because the distroless runtime has no shell and
+  # the healthcheck needs one (wget below). Prod would use the runtime
+  # image with an external check instead. Free tier ships :latest only
+  # (unpinned); pin by digest if that ever matters.
+  minio:
+    image: chainguard/minio:latest-dev
+    restart: always
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - piercemq
+
+  # --- One-shot: create the conventional `piercemq` bucket once MinIO is
+  # up. File jobs address buckets directly (s3://bucket/key) and PUT to a
+  # missing bucket fails, so this must complete before workers start.
+  # Uses the same -dev image: it bundles mc + sh (minio-client has mc
+  # but no shell, so two chained mc calls are impossible there).
+  minio-init:
+    image: chainguard/minio:latest-dev
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing local/piercemq'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - piercemq
+
   workers:
     build:
       context: .
@@ -416,10 +475,25 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       REDIS_ADDR: redis://:123456890ca@redis:6379/0
       DB_URL: postgres://admin:admin@pgbouncer:6432/piercemq?sslmode=disable
       DB_READ_URL: postgres://admin:admin@pgbouncer:6432/piercemq_ro?sslmode=disable
+      # Email goes to MailHog locally; set EMAIL_DRY_RUN=1 to skip sending.
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      SMTP_FROM: piercemq@localhost
+      # File jobs: sandboxed local dir + MinIO as the S3-compatible target.
+      FILE_BASE_DIR: /tmp/piercemq-files
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_REGION: us-east-1
+      # Exec jobs: empty = deny-all. Add binaries deliberately, e.g. "ls,ffmpeg".
+      EXEC_ALLOWLIST: ""
+      EXEC_WORKDIR: /tmp/piercemq-exec
     restart: always
     networks:
       - piercemq
@@ -527,6 +601,7 @@ volumes:
   pgbackrest-repo:
   etcd-data:
   redisdata:
+  miniodata:
 
 networks:
   piercemq:
