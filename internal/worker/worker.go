@@ -20,6 +20,7 @@ import (
 	"github.com/MikelGV/PierceMQ/internal/storage"
 	"github.com/MikelGV/PierceMQ/internal/storage/jobs"
 	"github.com/MikelGV/PierceMQ/internal/task"
+	"github.com/MikelGV/PierceMQ/internal/task/handlers"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -544,22 +545,22 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 					}
 				}
 
-			// Per-job PG heartbeat while the handler runs. Stops when
-			// the handler returns (hbCancel). No-op for legacy jobs.
-			// Heartbeat stops BEFORE fail/complete so a timed-out slot
-			// does not keep refreshing and livelock the reaper.
-			hbCtx, hbCancel := context.WithCancel(ctx)
-			if hasClaim(store, job) {
-				go heartbeatJob(hbCtx, store, job)
-			}
+				// Per-job PG heartbeat while the handler runs. Stops when
+				// the handler returns (hbCancel). No-op for legacy jobs.
+				// Heartbeat stops BEFORE fail/complete so a timed-out slot
+				// does not keep refreshing and livelock the reaper.
+				hbCtx, hbCancel := context.WithCancel(ctx)
+				if hasClaim(store, job) {
+					go heartbeatJob(hbCtx, store, job)
+				}
 
-			result, err := runWithTimeout(ctx, jobTimeout(), wkr, job.Type, payloadStr)
-			hbCancel()
-			if err != nil {
-				fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.MsgID, job.Type, err)
-				failJob(ctx, store, logW, wkr, job, err)
-				return
-			}
+				result, err := runWithTimeout(ctx, jobTimeout(), wkr, job.Type, payloadStr)
+				hbCancel()
+				if err != nil {
+					fmt.Fprintf(logW, "pool %s worker %d job %s type %s failed: %v\n", wkr.PoolID, wkr.ID, job.MsgID, job.Type, err)
+					failJob(ctx, store, logW, wkr, job, err)
+					return
+				}
 				// DB-first, then ack: a crash between leaves a completed
 				// row whose redeliveries the claim status guard absorbs.
 				if hasClaim(store, job) {
@@ -567,14 +568,17 @@ func workerLoop(ctx context.Context, wkr *Worker, store *broker.RedisStore, logW
 						fmt.Fprintf(logW, "pool %s worker %d complete failed %s: %v\n", wkr.PoolID, wkr.ID, job.JobID, err)
 					}
 				}
-			stream, group := ackTarget(job)
-			if stream != "" && group != "" {
-				if _, ackErr := store.AckJob(ctx, stream, group, job.MsgID); ackErr != nil {
-					fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, ackErr)
-				} else {
-					_ = result
+				// Structured success log: result strings are handler summaries
+				// (message-id, byte counts, exit output) — never raw payloads or
+				// secrets. Truncated so a chatty exec cannot flood logs.
+				fmt.Fprintf(logW, "pool %s worker %d job %s type %s ok: %s\n",
+					wkr.PoolID, wkr.ID, job.MsgID, job.Type, truncateLog(result, 500))
+				stream, group := ackTarget(job)
+				if stream != "" && group != "" {
+					if _, ackErr := store.AckJob(ctx, stream, group, job.MsgID); ackErr != nil {
+						fmt.Fprintf(logW, "pool %s worker %d ack failed %s: %v\n", wkr.PoolID, wkr.ID, job.MsgID, ackErr)
+					}
 				}
-			}
 			}()
 		}
 	}
@@ -596,6 +600,14 @@ func heartbeatLoop(ctx context.Context, conn *redis.Client, poolType string, w i
 			}
 		}
 	}
+}
+
+// truncateLog caps handler result strings for log lines.
+func truncateLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…[truncated]"
 }
 
 func streamForType(jobType string) string {
@@ -654,9 +666,16 @@ func (w *Worker) ClaimJob(wId, job_type, job_payload string, ctx context.Context
 }
 
 /**
-* This function process all jobs differentiating each type of job and doing what
-* it requires to complete them
+* This function processes all jobs by delegating to the real type handlers
+* in internal/task/handlers:
+*   - email: SMTP delivery (dry-run when SMTP_HOST is empty)
+*   - file/file_processing: local sandboxed copy or S3-compatible copy/sha256
+*     (legacy filename/path payloads validate without I/O)
+*   - exec/exec_processing: allowlisted binary execution, no shell
 *
+* Handler config comes from the process environment (see handlers
+* *ConfigFromEnv + internal/config), so this signature is unchanged and the
+* dispatcher wiring in runPool needs no update.
  */
 func (w *Worker) ProcessJobs(job_type, job_payload string, ctx context.Context) (string, error) {
 	if job_payload == "" {
@@ -666,27 +685,34 @@ func (w *Worker) ProcessJobs(job_type, job_payload string, ctx context.Context) 
 	if err := json.Unmarshal([]byte(job_payload), &payload); err != nil {
 		return "", fmt.Errorf("invalid job payload: %w", err)
 	}
-	if job_type == "email" {
-		if _, ok := payload["to"]; !ok {
-			return "", errors.New("email job missing required field: to")
+	getenv := os.Getenv
+	switch job_type {
+	case "email":
+		job, err := handlers.ParseEmailPayload(payload)
+		if err != nil {
+			return "", err
 		}
-		if _, ok := payload["from"]; !ok {
-			return "", errors.New("email job missing required field: from")
+		sender := handlers.SMTPSender{Cfg: handlers.EmailConfigFromEnv(getenv)}
+		msgID, err := sender.Send(ctx, job)
+		if err != nil {
+			return "", err
 		}
-		return fmt.Sprintf("email processed from %v to %v", payload["from"], payload["to"]), nil
-	} else if job_type == "exec" {
-		if _, ok := payload["command"]; !ok {
-			return "", errors.New("exec job missing required field: command")
+		return fmt.Sprintf("email sent from %s to %s id=%s", job.From, job.To, msgID), nil
+	case "exec", "exec_processing":
+		job, err := handlers.ParseExecPayload(payload)
+		if err != nil {
+			return "", err
 		}
-		return fmt.Sprintf("exec processed command %v", payload["command"]), nil
-	} else if job_type == "file" {
-		if _, ok := payload["filename"]; !ok {
-			if _, ok2 := payload["path"]; !ok2 {
-				return "", errors.New("file job missing required field: filename or path")
-			}
+		runner := handlers.Runner{Cfg: handlers.ExecConfigFromEnv(getenv)}
+		return runner.Run(ctx, job)
+	case "file", "file_processing":
+		job, err := handlers.ParseFilePayload(payload)
+		if err != nil {
+			return "", err
 		}
-		return fmt.Sprintf("file processed %v", payload["filename"]), nil
-	} else {
+		proc := handlers.NewProcessor(handlers.FileConfigFromEnv(getenv))
+		return proc.Process(ctx, job)
+	default:
 		return "", errors.New("Job type doesn't match with the allowed ones")
 	}
 }

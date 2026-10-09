@@ -56,6 +56,25 @@ type Config struct {
 	// RateLimitBurst is the per-caller token bucket size. Zero/negative
 	// falls back to DefaultRateLimitBurst.
 	RateLimitBurst int64
+	// --- Job handler settings (internal/task/handlers) ---
+	// Email: SMTP_HOST empty (or EMAIL_DRY_RUN=1) means validate-only.
+	SMTPHost    string
+	SMTPPort    int64
+	SMTPUser    string
+	SMTPFrom    string
+	SMTPTimeout int64
+	EmailDryRun bool
+	// Files: local sandbox + optional S3-compatible endpoint.
+	FileBaseDir string
+	FileMaxMB   int64
+	S3Endpoint  string
+	S3AccessKey string
+	S3Region    string
+	S3UseSSL    bool
+	// Exec: comma-separated allowlist of bare binary names. Empty = deny-all.
+	ExecAllowlist string
+	ExecWorkDir   string
+	ExecMaxOutput int64
 }
 
 var Env = initConfig()
@@ -90,6 +109,21 @@ func initConfig() Config {
 		RetentionBatchSize:      getIntEnv("RETENTION_BATCH", 1000),
 		RateLimitRPS:            getIntEnv("RATE_LIMIT_RPS", DefaultRateLimitRPS),
 		RateLimitBurst:          getIntEnv("RATE_LIMIT_BURST", DefaultRateLimitBurst),
+		SMTPHost:                getEnv("SMTP_HOST", ""),
+		SMTPPort:                getIntEnv("SMTP_PORT", 587),
+		SMTPUser:                getEnv("SMTP_USER", ""),
+		SMTPFrom:                getEnv("SMTP_FROM", ""),
+		SMTPTimeout:             getIntEnv("SMTP_TIMEOUT_SEC", 15),
+		EmailDryRun:             getEnv("EMAIL_DRY_RUN", "") == "1",
+		FileBaseDir:             getEnv("FILE_BASE_DIR", ""),
+		FileMaxMB:               getIntEnv("FILE_MAX_MB", 100),
+		S3Endpoint:              getEnv("S3_ENDPOINT", ""),
+		S3AccessKey:             getEnv("S3_ACCESS_KEY", ""),
+		S3Region:                getEnv("S3_REGION", "us-east-1"),
+		S3UseSSL:                getEnv("S3_USE_SSL", "") == "1",
+		ExecAllowlist:           getEnv("EXEC_ALLOWLIST", ""),
+		ExecWorkDir:             getEnv("EXEC_WORKDIR", ""),
+		ExecMaxOutput:           getIntEnv("EXEC_MAX_OUTPUT", 4096),
 	}
 }
 

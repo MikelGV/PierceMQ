@@ -147,10 +147,19 @@ func TestProcessJobs(t *testing.T) {
 	})
 
 	t.Run("Exec job gets processed correctly", func(t *testing.T) {
+		t.Setenv("EXEC_ALLOWLIST", "ls")
 		result, err := w.ProcessJobs("exec", `{"command": "ls", "args": ["-la"], "timeout": 30}`, ctx)
 
 		require.NoError(t, err)
 		assert.NotEmpty(t, result, "expected a success message for a valid exec job")
+	})
+
+	t.Run("Exec job denied when not allowlisted", func(t *testing.T) {
+		t.Setenv("EXEC_ALLOWLIST", "ffmpeg")
+		result, err := w.ProcessJobs("exec", `{"command": "ls"}`, ctx)
+
+		require.Error(t, err)
+		assert.Empty(t, result)
 	})
 
 	t.Run("Unknown job type returns an error", func(t *testing.T) {
