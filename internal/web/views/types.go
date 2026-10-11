@@ -1,6 +1,9 @@
 package views
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Display models shared by handlers and templates. They mirror the API
 // shapes; handlers convert API maps into these.
@@ -26,10 +29,84 @@ type JobEvent struct {
 // JobForm carries the enqueue form values back on validation errors so the
 // user doesn't lose their input.
 type JobForm struct {
-	Type, QueueName, Payload  string
-	Priority, MaxRetry        string
+	Type, QueueName, Payload string
+	Priority, MaxRetry       string
 	ScheduledAt, Cron, CronTZ string
-	IdempotencyKey            string
+}
+
+// QueueTypes are the canonical job types offered by the enqueue form.
+var QueueTypes = []string{"email", "file_processing", "exec_processing"}
+
+// QueueOption is one canonical stream a job can be routed to. Name is the
+// queue_name the API expects, Type is the job type owning it.
+type QueueOption struct {
+	Name string
+	Type string
+}
+
+// QueueOptions lists the six canonical queues in display order. Mirrors
+// internal/queue: every entry is "<type>-high" or "<type>-low".
+func QueueOptions() []QueueOption {
+	out := make([]QueueOption, 0, len(QueueTypes)*2)
+	for _, t := range QueueTypes {
+		out = append(out,
+			QueueOption{Name: t + "-high", Type: t},
+			QueueOption{Name: t + "-low", Type: t},
+		)
+	}
+	return out
+}
+
+// DefaultQueue is the queue a type routes to when the form leaves it empty,
+// matching the API default of "<type>-high".
+func DefaultQueue(jobType string) string {
+	if jobType == "" {
+		jobType = QueueTypes[0]
+	}
+	return jobType + "-high"
+}
+
+// QueueType strips the -high/-low suffix from a canonical queue name.
+func QueueType(queue string) string {
+	q := strings.TrimSpace(strings.ToLower(queue))
+	if t := strings.TrimSuffix(q, "-high"); t != q {
+		return t
+	}
+	return strings.TrimSuffix(q, "-low")
+}
+
+// IsCanonicalQueue reports whether name is one of the six known streams.
+func IsCanonicalQueue(name string) bool {
+	n := strings.TrimSpace(strings.ToLower(name))
+	for _, q := range QueueOptions() {
+		if q.Name == n {
+			return true
+		}
+	}
+	return false
+}
+
+// IsLowQueue reports whether a canonical queue routes to the low stream.
+func IsLowQueue(queue string) bool {
+	return strings.HasSuffix(strings.TrimSpace(strings.ToLower(queue)), "-low")
+}
+
+// SelectedQueue is the queue marked in the form: the submitted value when
+// present, else the type's default high stream.
+func SelectedQueue(form JobForm) string {
+	if q := strings.TrimSpace(form.QueueName); q != "" {
+		return q
+	}
+	return DefaultQueue(form.Type)
+}
+
+// PriorityLabel renders the routing tier a stored priority selects. Mirrors
+// queue.StreamFor, where only the sign of priority matters.
+func PriorityLabel(priority int) string {
+	if priority > 0 {
+		return "High"
+	}
+	return "Low"
 }
 
 // JobFilter carries the dashboard list state for tabs and paging.

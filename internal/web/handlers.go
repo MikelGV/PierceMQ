@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MikelGV/PierceMQ/internal/web/views"
+	"github.com/google/uuid"
 )
 
 // statsFromMap converts GET /v1/stats for the dashboard cards.
@@ -277,6 +279,23 @@ func (s *Server) handleJobNew(w http.ResponseWriter, r *http.Request) {
 	_ = views.JobNew(views.JobForm{}, "").Render(r.Context(), w)
 }
 
+// parseRunAt converts the datetime-local form value to the RFC3339 UTC the
+// API expects. datetime-local carries no timezone, so a bare local time is
+// interpreted as UTC. Full RFC3339 input is still accepted for hand-written
+// form posts and is normalised to UTC.
+func parseRunAt(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t.UTC().Format(time.RFC3339), nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04"} {
+		if t, err := time.ParseInLocation(layout, v, time.UTC); err == nil {
+			return t.UTC().Format(time.RFC3339), nil
+		}
+	}
+	return "", fmt.Errorf("invalid run-at %q", v)
+}
+
 // handleJobCreate validates the form server-side and enqueues via the API.
 func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -285,15 +304,14 @@ func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := views.JobForm{
-		Type:           strings.TrimSpace(r.FormValue("type")),
-		QueueName:      strings.TrimSpace(r.FormValue("queue_name")),
-		Payload:        strings.TrimSpace(r.FormValue("payload")),
-		Priority:       strings.TrimSpace(r.FormValue("priority")),
-		MaxRetry:       strings.TrimSpace(r.FormValue("max_retry")),
-		ScheduledAt:    strings.TrimSpace(r.FormValue("scheduled_at")),
-		Cron:           strings.TrimSpace(r.FormValue("cron")),
-		CronTZ:         strings.TrimSpace(r.FormValue("cron_tz")),
-		IdempotencyKey: strings.TrimSpace(r.FormValue("idempotency_key")),
+		Type:        strings.TrimSpace(r.FormValue("type")),
+		QueueName:   strings.TrimSpace(r.FormValue("queue_name")),
+		Payload:     strings.TrimSpace(r.FormValue("payload")),
+		Priority:    strings.TrimSpace(r.FormValue("priority")),
+		MaxRetry:    strings.TrimSpace(r.FormValue("max_retry")),
+		ScheduledAt: strings.TrimSpace(r.FormValue("scheduled_at")),
+		Cron:        strings.TrimSpace(r.FormValue("cron")),
+		CronTZ:      strings.TrimSpace(r.FormValue("cron_tz")),
 	}
 	fail := func(msg string) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -313,17 +331,36 @@ func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]any{"type": form.Type, "payload": payload}
-	if form.QueueName != "" {
-		body["queue_name"] = form.QueueName
+
+	// Queue: the form only offers the six canonical streams, and the queue
+	// must belong to the selected type. Defaulting to "<type>-high" mirrors
+	// the API default so an untouched field routes the same way.
+	queueName := form.QueueName
+	if queueName == "" {
+		queueName = views.DefaultQueue(form.Type)
 	}
-	if form.Priority != "" {
-		n, err := strconv.Atoi(form.Priority)
-		if err != nil {
-			fail("priority must be an integer")
-			return
-		}
-		body["priority"] = n
+	if !views.IsCanonicalQueue(queueName) || views.QueueType(queueName) != form.Type {
+		fail("queue must be one of the streams for type " + form.Type)
+		return
 	}
+	body["queue_name"] = queueName
+
+	// Priority is a 0/1 tier mirroring the queue's -high/-low suffix. The
+	// suffix is what actually routes the job (queue.StreamFor), so it is
+	// authoritative: reject junk, then derive the stored value from it
+	// instead of persisting a contradictory pair.
+	switch form.Priority {
+	case "", "0", "1":
+	default:
+		fail("priority must be 0 (low) or 1 (high)")
+		return
+	}
+	priority := 1
+	if views.IsLowQueue(queueName) {
+		priority = 0
+	}
+	body["priority"] = priority
+
 	if form.MaxRetry != "" {
 		n, err := strconv.Atoi(form.MaxRetry)
 		if err != nil || n < 0 {
@@ -333,7 +370,12 @@ func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
 		body["max_retry"] = n
 	}
 	if form.ScheduledAt != "" {
-		body["scheduled_at"] = form.ScheduledAt
+		runAt, err := parseRunAt(form.ScheduledAt)
+		if err != nil {
+			fail("run at must be a valid date and time")
+			return
+		}
+		body["scheduled_at"] = runAt
 	}
 	if form.Cron != "" {
 		body["cron"] = form.Cron
@@ -341,10 +383,10 @@ func (s *Server) handleJobCreate(w http.ResponseWriter, r *http.Request) {
 	if form.CronTZ != "" {
 		body["cron_tz"] = form.CronTZ
 	}
-	var headers map[string]string
-	if form.IdempotencyKey != "" {
-		headers = map[string]string{"Idempotency-Key": form.IdempotencyKey}
-	}
+	// The form never exposes the idempotency key: every submit mints a fresh
+	// UUID so the user cannot accidentally reuse one and get a 409 on a job
+	// they never meant to deduplicate. API clients still supply their own.
+	headers := map[string]string{"Idempotency-Key": uuid.NewString()}
 	var out map[string]any
 	if _, err := s.apiDoWithHeaders(r, http.MethodPost, "/v1/jobs", headers, body, &out); err != nil {
 		switch apiStatusOf(err) {

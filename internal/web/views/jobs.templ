@@ -40,7 +40,7 @@ templ JobDetail(job Job, events []JobEvent) {
 					@fieldRow("id", job.ID)
 					@fieldRow("type", job.Type)
 					@fieldRow("queue", job.Queue)
-					@fieldRow("priority", Num(int64(job.Priority)))
+					@fieldRow("priority", PriorityLabel(job.Priority))
 					@fieldRow("attempt", Num(int64(job.Attempt))+" / "+Num(int64(job.MaxRetry)))
 					@fieldRow("created", job.CreatedAt)
 					if job.StartedAt != "" {
@@ -119,16 +119,19 @@ templ JobNew(form JobForm, errMsg string) {
 				<div class="grid gap-4 md:grid-cols-2">
 					<div>
 						<label for="type" class="block text-sm font-medium text-zinc-300">Type</label>
-						<select id="type" name="type" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
-							<option value="email" selected?={ form.Type == "" || form.Type == "email" }>email</option>
-							<option value="file_processing" selected?={ form.Type == "file_processing" }>file_processing</option>
-							<option value="exec_processing" selected?={ form.Type == "exec_processing" }>exec_processing</option>
+						<select id="type" name="type" data-queue-type class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
+							for _, t := range QueueTypes {
+								<option value={ t } selected?={ form.Type == "" || form.Type == t }>{ t }</option>
+							}
 						</select>
 					</div>
 					<div>
-						<label for="queue_name" class="block text-sm font-medium text-zinc-300">Queue <span class="text-zinc-500">(default &lt;type&gt;-high)</span></label>
-						<input id="queue_name" name="queue_name" type="text" value={ form.QueueName } placeholder="email-high"
-							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 focus:border-emerald-500 focus:outline-none"/>
+						<label for="queue_name" class="block text-sm font-medium text-zinc-300">Queue</label>
+						<select id="queue_name" name="queue_name" data-queue-select class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
+							for _, q := range QueueOptions() {
+								<option value={ q.Name } data-type={ q.Type } selected?={ q.Name == SelectedQueue(form) }>{ q.Name }</option>
+							}
+						</select>
 					</div>
 				</div>
 				<div>
@@ -139,8 +142,10 @@ templ JobNew(form JobForm, errMsg string) {
 				<div class="grid gap-4 md:grid-cols-2">
 					<div>
 						<label for="priority" class="block text-sm font-medium text-zinc-300">Priority</label>
-						<input id="priority" name="priority" type="number" value={ form.Priority } placeholder="0"
-							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-500 focus:border-emerald-500 focus:outline-none"/>
+						<select id="priority" name="priority" data-priority-select class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none">
+							<option value="1" selected?={ form.Priority == "" || form.Priority == "1" }>High</option>
+							<option value="0" selected?={ form.Priority == "0" }>Low</option>
+						</select>
 					</div>
 					<div>
 						<label for="max_retry" class="block text-sm font-medium text-zinc-300">Max retries <span class="text-zinc-500">(default 3)</span></label>
@@ -149,9 +154,9 @@ templ JobNew(form JobForm, errMsg string) {
 					</div>
 				</div>
 				<div>
-					<label for="scheduled_at" class="block text-sm font-medium text-zinc-300">Run at <span class="text-zinc-500">(RFC3339, or leave empty)</span></label>
-					<input id="scheduled_at" name="scheduled_at" type="text" value={ form.ScheduledAt } placeholder="2026-10-05T14:00:00Z"
-						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
+					<label for="scheduled_at" class="block text-sm font-medium text-zinc-300">Run at <span class="text-zinc-500">(UTC, or leave empty)</span></label>
+					<input id="scheduled_at" name="scheduled_at" type="datetime-local" value={ form.ScheduledAt }
+						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
 				</div>
 				<div class="grid gap-4 md:grid-cols-2">
 					<div>
@@ -165,13 +170,45 @@ templ JobNew(form JobForm, errMsg string) {
 							class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
 					</div>
 				</div>
-				<div>
-					<label for="idempotency_key" class="block text-sm font-medium text-zinc-300">Idempotency key <span class="text-zinc-500">(optional)</span></label>
-					<input id="idempotency_key" name="idempotency_key" type="text" value={ form.IdempotencyKey }
-						class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-sm placeholder-zinc-600 focus:border-emerald-500 focus:outline-none"/>
-				</div>
 				<button type="submit" class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">Enqueue job</button>
 			</form>
+			<script>
+				(function () {
+					var typeSel = document.querySelector("[data-queue-type]");
+					var queueSel = document.querySelector("[data-queue-select]");
+					var prioritySel = document.querySelector("[data-priority-select]");
+					if (!typeSel || !queueSel) { return; }
+
+					function syncPriority() {
+						if (prioritySel) {
+							prioritySel.value = /-low$/.test(queueSel.value) ? "0" : "1";
+						}
+					}
+
+					function applyType() {
+						var type = typeSel.value;
+						var shown = 0;
+						for (var i = 0; i < queueSel.options.length; i++) {
+							var opt = queueSel.options[i];
+							var match = opt.getAttribute("data-type") === type;
+							opt.hidden = !match;
+							opt.disabled = !match;
+							if (match) { shown++; }
+						}
+						if (shown === 0) { return; }
+						if (queueSel.selectedOptions[0] && !queueSel.selectedOptions[0].disabled) {
+							syncPriority();
+							return;
+						}
+						queueSel.value = type + "-high";
+						syncPriority();
+					}
+
+					typeSel.addEventListener("change", applyType);
+					queueSel.addEventListener("change", syncPriority);
+					applyType();
+				})();
+			</script>
 		</div>
 	}
 }

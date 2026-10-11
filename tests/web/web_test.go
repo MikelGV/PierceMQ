@@ -254,6 +254,80 @@ func TestWebJobFlows(t *testing.T) {
 		require.Contains(t, string(b), "JSON object")
 	})
 
+	t.Run("form offers queue dropdown and hides idempotency key", func(t *testing.T) {
+		code, body := webGet(t, fx, "/jobs/new")
+		require.Equal(t, http.StatusOK, code)
+		require.NotContains(t, body, `name="idempotency_key"`)
+		require.Contains(t, body, "data-queue-select")
+		require.Contains(t, body, `value="email-low"`)
+		require.Contains(t, body, `type="datetime-local"`)
+		require.Contains(t, body, ">High</option>")
+	})
+
+	t.Run("low queue stores low priority", func(t *testing.T) {
+		resp, err := fx.noRed.PostForm(fx.web.URL+"/jobs", url.Values{
+			"type": {"email"}, "queue_name": {"email-low"},
+			"payload": {`{"to":"low@example.com"}`},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+		code, body := webGet(t, fx, resp.Header.Get("Location"))
+		require.Equal(t, http.StatusOK, code)
+		require.Contains(t, body, ">Low<")
+	})
+
+	t.Run("create form rejects queue of another type", func(t *testing.T) {
+		resp, err := fx.noRed.PostForm(fx.web.URL+"/jobs", url.Values{
+			"type": {"email"}, "queue_name": {"exec_processing-high"},
+			"payload": {`{"to":"x@example.com"}`},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.Contains(t, string(b), "streams for type email")
+	})
+
+	t.Run("create form rejects non binary priority", func(t *testing.T) {
+		resp, err := fx.noRed.PostForm(fx.web.URL+"/jobs", url.Values{
+			"type": {"email"}, "queue_name": {"email-high"}, "priority": {"7"},
+			"payload": {`{"to":"x@example.com"}`},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.Contains(t, string(b), "0 (low) or 1 (high)")
+	})
+
+	t.Run("datetime-local schedules as UTC", func(t *testing.T) {
+		resp, err := fx.noRed.PostForm(fx.web.URL+"/jobs", url.Values{
+			"type": {"email"}, "queue_name": {"email-high"},
+			"payload": {`{"to":"sched@example.com"}`}, "scheduled_at": {"2030-01-02T15:04"},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+		code, body := webGet(t, fx, resp.Header.Get("Location"))
+		require.Equal(t, http.StatusOK, code)
+		require.Contains(t, body, "2030-01-02T15:04:00Z")
+	})
+
+	t.Run("create form rejects unparsable run at", func(t *testing.T) {
+		resp, err := fx.noRed.PostForm(fx.web.URL+"/jobs", url.Values{
+			"type": {"email"}, "queue_name": {"email-high"},
+			"payload": {`{"to":"x@example.com"}`}, "scheduled_at": {"tomorrow"},
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		require.Contains(t, string(b), "valid date and time")
+	})
+
 	t.Run("retry and cancel buttons work", func(t *testing.T) {
 		out, err := apiClient.Enqueue(ctx, client.EnqueueRequest{
 			Type: "email", QueueName: "email-high", MaxRetry: 1,
